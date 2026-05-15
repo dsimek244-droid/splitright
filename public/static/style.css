@@ -1,1 +1,201 @@
-h1 { font-family: Arial, Helvetica, sans-serif; }
+/* SplitRight — premium mobile-first styling */
+:root {
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(99,102,241,0.10), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(16,185,129,0.08), transparent 60%),
+    #F8FAFC;
+}
+
+/* App shell — phone-style centered frame on large screens, full-bleed on phones */
+.app-shell {
+  max-width: 460px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding-top: var(--safe-top);
+  padding-bottom: calc(var(--safe-bottom) + 96px);
+  position: relative;
+}
+
+/* Sticky bottom action bar */
+.action-bar {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 16px calc(12px + var(--safe-bottom));
+  background: linear-gradient(180deg, rgba(248,250,252,0) 0%, rgba(248,250,252,0.85) 30%, rgba(248,250,252,1) 60%);
+  backdrop-filter: blur(8px);
+}
+
+/* Buttons */
+.btn-primary {
+  background: linear-gradient(135deg, #6366F1 0%, #4F46E5 100%);
+  color: white;
+  font-weight: 700;
+  border-radius: 18px;
+  padding: 16px 20px;
+  width: 100%;
+  font-size: 16px;
+  box-shadow: 0 10px 24px rgba(79, 70, 229, 0.35);
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+.btn-primary:active { transform: translateY(1px) scale(0.99); box-shadow: 0 6px 14px rgba(79,70,229,0.30); }
+.btn-primary:disabled { opacity: 0.5; box-shadow: none; }
+
+.btn-secondary {
+  background: white;
+  color: #111827;
+  font-weight: 600;
+  border-radius: 16px;
+  padding: 14px 18px;
+  border: 1px solid #E5E7EB;
+  width: 100%;
+}
+.btn-secondary:active { transform: translateY(1px) scale(0.99); }
+
+.btn-ghost {
+  color: #4F46E5;
+  font-weight: 600;
+}
+
+/* Cards */
+.card {
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05);
+  border: 1px solid rgba(15,23,42,0.04);
+}
+
+/* Chip / avatar */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.6), 0 2px 6px rgba(0,0,0,0.08);
+}
+.avatar.sm { width: 24px; height: 24px; font-size: 11px; }
+.avatar.lg { width: 44px; height: 44px; font-size: 16px; }
+
+/* Item row tap target */
+.item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: white;
+  border-radius: 16px;
+  border: 1px solid rgba(15,23,42,0.05);
+  transition: box-shadow .15s ease, transform .12s ease;
+}
+.item-row:active { transform: scale(0.995); }
+
+/* Person toggle pill on item row */
+.assign-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12px;
+  border: 1.5px solid transparent;
+  background: #F1F5F9;
+  color: #475569;
+  transition: all .15s ease;
+}
+.assign-pill.is-on {
+  color: white;
+  border-color: rgba(255,255,255,0.6);
+}
+.assign-pill:active { transform: scale(0.96); }
+
+/* Tip option */
+.tip-option {
+  padding: 14px 8px;
+  border-radius: 14px;
+  border: 1.5px solid #E5E7EB;
+  background: white;
+  font-weight: 700;
+  text-align: center;
+  transition: all .15s ease;
+}
+.tip-option.is-on {
+  border-color: #4F46E5;
+  background: #EEF2FF;
+  color: #4338CA;
+  box-shadow: 0 4px 12px rgba(79,70,229,0.12);
+}
+
+/* Stepper */
+.step-dot {
+  width: 8px; height: 8px; border-radius: 999px; background: #CBD5E1;
+}
+.step-dot.is-on { background: #4F46E5; width: 22px; }
+
+/* Hide number input spinners */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }
+
+/* Subtle scanning animation on the splash */
+@keyframes scanline {
+  0% { transform: translateY(-100%); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateY(220%); opacity: 0; }
+}
+.scanline {
+  position: absolute; left: 0; right: 0; height: 24%;
+  background: linear-gradient(180deg, transparent, rgba(99,102,241,0.4), transparent);
+  filter: blur(2px);
+  animation: scanline 1.6s ease-in-out infinite;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(28px + var(--safe-bottom));
+  background: #0B1220;
+  color: white;
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  z-index: 60;
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
