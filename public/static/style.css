@@ -195,6 +195,59 @@ input[type=number] { -moz-appearance: textfield; }
   z-index: 60;
 }
 
+/* Google sign-in button — Material spec */
+.btn-google {
+  background: white;
+  color: #1F1F1F;
+  font-weight: 600;
+  border-radius: 16px;
+  padding: 14px 18px;
+  border: 1px solid #DADCE0;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 15px;
+  box-shadow: 0 1px 2px rgba(60,64,67,0.08);
+}
+.btn-google:active { transform: translateY(1px) scale(0.99); }
+
+/* Plan card on paywall */
+.plan-card {
+  border-radius: 20px;
+  padding: 18px;
+  background: white;
+  border: 2px solid #E5E7EB;
+  transition: all .15s ease;
+}
+.plan-card.is-on {
+  border-color: #4F46E5;
+  background: linear-gradient(180deg, #F5F3FF 0%, #FFFFFF 100%);
+  box-shadow: 0 6px 20px rgba(79,70,229,0.18);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.badge-save { background: #DCFCE7; color: #166534; }
+.badge-trial { background: #EEF2FF; color: #4338CA; }
+
+/* Confetti dot */
+@keyframes pop-in {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.pop-in { animation: pop-in .35s ease-out both; }
+
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

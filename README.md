@@ -12,15 +12,26 @@
 | # | Feature | Status |
 |---|---------|--------|
 | 1 | Clean, modern, premium mobile-first UI (Tailwind + Inter, bold colors, rounded cards) | ✅ |
-| 2 | **Scan Receipt screen** with simulated OCR animation (1.8s) + "use sample receipt" shortcut | ✅ |
-| 3 | **People screen** — add/remove people, name + 8-color tag picker, edit colors inline | ✅ |
-| 4 | **Items screen** — receipt items, multi-person assignment via tap-pills, "Everyone" shortcut, add/remove custom items, live "$/person" preview when shared | ✅ |
-| 5 | **Tip selector** — 10% / 15% / 20% / Custom %, live amount preview | ✅ |
-| 6 | **Tax** — adjustable slider (0–15%), pre-filled at 8.75% | ✅ |
-| 7 | **Summary screen** — per-person breakdown (items + tax share + tip share + total), expandable details, grand total card | ✅ |
-| 8 | **Send Requests screen** — generates a payment message per person, "Copy message" + native "Share" + deep links into Venmo / Cash App / PayPal with amount pre-filled | ✅ |
-| 9 | **Dummy receipt pre-loaded** — "The Iron Skillet" with 10 items already assigned across 4 people so you can test every screen instantly | ✅ |
-| 10 | **PWA manifest + iOS meta tags** — installable to home screen, App-Store-wrapper-ready | ✅ |
+| 2 | **Sign-In screen** — Continue with Google / Apple / Email (mocked, ready to be swapped for real OAuth). State persists in `localStorage`. | ✅ |
+| 3 | **Paywall** — 7-day free trial, then **$4.99/month** or **$39.99/year (save 33%)**, with "Restore purchases", legal-compliant disclosure of price, renewal date, and "cancel anytime" | ✅ |
+| 4 | **Account screen** — shown via avatar in the top-right; displays user, plan, days left in trial, first-charge date, and Cancel Subscription button | ✅ |
+| 5 | **Scan Receipt screen** with simulated OCR animation (1.8s) + "use sample receipt" shortcut; shows a "Trial · Nd left" badge | ✅ |
+| 6 | **People screen** — add/remove people, name + 8-color tag picker, edit colors inline | ✅ |
+| 7 | **Items screen** — receipt items, multi-person assignment via tap-pills, "Everyone" shortcut, add/remove custom items, live "$/person" preview when shared | ✅ |
+| 8 | **Tip selector** — 10% / 15% / 20% / Custom %, live amount preview | ✅ |
+| 9 | **Tax** — adjustable slider (0–15%), pre-filled at 8.75% | ✅ |
+| 10 | **Summary screen** — per-person breakdown (items + tax share + tip share + total), expandable details, grand total card | ✅ |
+| 11 | **Send Requests screen** — generates a payment message per person, "Copy message" + native "Share" + deep links into Venmo / Cash App / PayPal with amount pre-filled | ✅ |
+| 12 | **Dummy receipt pre-loaded** — "The Iron Skillet" with 10 items already assigned across 4 people so you can test every screen instantly | ✅ |
+| 13 | **PWA manifest + iOS meta tags** — installable to home screen, App-Store-wrapper-ready | ✅ |
+
+### Flow on first launch
+```
+Sign-In  →  Paywall  →  Scan  →  People  →  Items  →  Tip & Tax  →  Summary  →  Send
+   ↑           ↑           ↓
+   └── Sign out / Cancel ──── Account screen (via avatar top-right)
+```
+Auth + subscription are persisted in `localStorage` under the key `splitright.v1`, so closing and re-opening the tab keeps you signed in and inside your trial. To replay the full first-launch flow, open DevTools → Application → Local Storage → delete `splitright.v1` and refresh.
 
 ## Functional Entry URIs
 
@@ -84,6 +95,12 @@ This is a web app, so the App Store path is to **wrap it as a hybrid native iOS 
 npm install --save @capacitor/core @capacitor/ios
 npm install --save-dev @capacitor/cli
 npx cap init SplitRight com.yourcompany.splitright --web-dir=dist
+
+# Auth + IAP plugins
+npm install --save @codetrix-studio/capacitor-google-auth   # Google Sign-In
+npm install --save @capacitor-community/apple-sign-in       # required by Apple if you offer Google
+npm install --save @capacitor-community/in-app-purchases    # StoreKit subscriptions
+
 npm run build
 npx cap add ios
 npx cap copy ios
@@ -93,7 +110,41 @@ Then in Xcode:
 1. Set the team / bundle id (`com.yourcompany.splitright`).
 2. Add app icons (1024×1024 master + the asset catalog set) and a launch screen.
 3. Add **`NSCameraUsageDescription`** to `Info.plist` (required for the real-camera OCR you'll wire in to replace the simulated scanner): *"SplitRight uses the camera to scan restaurant receipts."*
-4. Archive → Distribute App → App Store Connect.
+4. **Enable capabilities**: *Sign in with Apple* and *In-App Purchase*.
+5. Archive → Distribute App → App Store Connect.
+
+### Wiring up the real auth + subscription
+
+The current `SignInScreen` and `PaywallScreen` are mocked with `setTimeout` so the demo runs anywhere. Swap the two mocked functions for real calls:
+
+```ts
+// SignInScreen.signIn()
+import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
+const result = await GoogleAuth.signIn();
+const user = { name: result.name, email: result.email, avatar: result.imageUrl, provider: 'google' };
+onSignedIn(user);
+```
+
+```ts
+// PaywallScreen.startTrial()
+import { InAppPurchases } from '@capacitor-community/in-app-purchases';
+const productId = `com.yourcompany.splitright.${selected}`;     // 'monthly' | 'yearly'
+const result = await InAppPurchases.purchaseProduct({ productIdentifier: productId });
+// Then verify result.receipt on your server with Apple's verifyReceipt endpoint,
+// and set the local subscription state from that verified response.
+```
+
+### App Store Connect setup for the subscription
+1. **App Store Connect → Your App → Subscriptions** → create a **Subscription Group** called *SplitRight Premium*.
+2. Inside the group add two auto-renewable products:
+   - `com.yourcompany.splitright.monthly` — $4.99 / 1 month
+   - `com.yourcompany.splitright.yearly`  — $39.99 / 1 year
+3. On each product, add an **Introductory Offer → Free Trial → 7 days** (same offer on both so users can switch plans without losing the trial).
+4. Fill in localized display name + description (Apple Review will reject if blank).
+5. Upload promotional review screenshot of the paywall.
+
+### Why Stripe / your own card form won't pass review
+Apple's Guideline 3.1.1 requires **all** digital subscriptions to be processed via StoreKit IAP. The paywall in this build doesn't ship a card form — it just shows the price and a "Start 7-day free trial" CTA — which is exactly what App Review wants. Just connect the button to `InAppPurchases.purchaseProduct(...)` and you're compliant.
 
 ### Option B — PWA + PWABuilder
 1. Deploy to a real domain (`npm run deploy` to Cloudflare Pages).

@@ -1,11 +1,41 @@
 /* =========================================================================
    SplitRight — single-file React app
-   - Screens: Splash/Scan → People → Items → Tip & Tax → Summary → Send
+   - Auth: Sign in with Google (mocked client-side; replace with real OAuth /
+     Capacitor GoogleAuth + Sign in with Apple before App Store submission)
+   - Subscription: 7-day free trial → $4.99 / month or $39.99 / year
+     (Web demo uses localStorage; on iOS this MUST be wired to StoreKit
+     IAP via @capacitor-community/in-app-purchases. Apple requires IAP for
+     digital subscriptions — Stripe/credit-card forms are not allowed.)
+   - Flow: SignIn → Paywall → Scan → People → Items → Tip & Tax → Summary → Send
+   - Account screen (top-right avatar) shows trial status, plan, and "manage"
    - Pre-loaded with dummy receipt data so it's testable instantly
    - All in one file as requested
    ========================================================================= */
 
 const { useState, useMemo, useEffect, useRef, useCallback } = React;
+
+/* ----------------------------- Persistence ------------------------------ */
+const STORAGE_KEY = "splitright.v1";
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveState(partial) {
+  try {
+    const cur = loadState() || {};
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...cur, ...partial }));
+  } catch {}
+}
+
+/* ----------------------------- Pricing ---------------------------------- */
+const PLANS = {
+  monthly: { id: "monthly", label: "Monthly",  price: 4.99,  per: "month", trialDays: 7 },
+  yearly:  { id: "yearly",  label: "Yearly",   price: 39.99, per: "year",  trialDays: 7, savePct: 33 }
+};
+const TRIAL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /* ----------------------------- Dummy data ------------------------------- */
 const DUMMY_RECEIPT = {
@@ -179,7 +209,7 @@ function Toast({ message, onDone }) {
 /* =========================================================================
    Screen 1 — Splash / Scan Receipt
    ========================================================================= */
-function ScanScreen({ onScan }) {
+function ScanScreen({ onScan, user, subscription, onOpenAccount }) {
   const [scanning, setScanning] = useState(false);
 
   const startScan = () => {
@@ -191,6 +221,10 @@ function ScanScreen({ onScan }) {
     }, 1800);
   };
 
+  const daysLeft = subscription?.status === "trial"
+    ? Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / (24 * 60 * 60 * 1000)))
+    : null;
+
   return (
     <div className="app-shell flex flex-col">
       <div className="px-5 pt-10">
@@ -199,6 +233,21 @@ function ScanScreen({ onScan }) {
             <i className="fa-solid fa-receipt text-white"></i>
           </div>
           <span className="font-extrabold text-lg tracking-tight">SplitRight</span>
+          {daysLeft !== null && (
+            <span className="ml-1 badge badge-trial">
+              <i className="fa-solid fa-gift text-[9px]"></i> Trial · {daysLeft}d left
+            </span>
+          )}
+          <div className="flex-1"></div>
+          {user && onOpenAccount && (
+            <button
+              onClick={onOpenAccount}
+              className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center active:scale-95"
+              aria-label="Account"
+            >
+              <span className="avatar sm" style={{ background: "#6366F1" }}>{initialsOf(user.name)}</span>
+            </button>
+          )}
         </div>
 
         <h1 className="mt-10 text-4xl font-black leading-[1.05] tracking-tight">
@@ -953,10 +1002,387 @@ function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
 }
 
 /* =========================================================================
+   Screen 0a — Google Sign-In
+   ========================================================================= */
+function GoogleG() {
+  // Official Google "G" mark (4-color), inline SVG so we don't need a network image.
+  return (
+    <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20c0-1.3-.1-2.3-.4-3.5z"/>
+      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/>
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.6 39.5 16.2 44 24 44z"/>
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4 5.6l6.2 5.2C41.9 35.8 44 30.3 44 24c0-1.3-.1-2.3-.4-3.5z"/>
+    </svg>
+  );
+}
+
+function SignInScreen({ onSignedIn }) {
+  const [loading, setLoading] = useState(false);
+
+  /* Mocked Google sign-in.
+     For App Store builds replace with:
+       - iOS: @codetrix-studio/capacitor-google-auth  (and add Sign in with Apple — Apple requires it if you offer Google)
+       - Web: Google Identity Services (GIS) one-tap prompt */
+  const signIn = () => {
+    setLoading(true);
+    setTimeout(() => {
+      const user = {
+        name: "Demo User",
+        email: "demo@gmail.com",
+        avatar: null, // we render initials when no photo
+        provider: "google"
+      };
+      onSignedIn(user);
+    }, 900);
+  };
+
+  return (
+    <div className="app-shell flex flex-col">
+      <div className="px-5 pt-16 text-center">
+        <div className="inline-flex w-14 h-14 rounded-2xl bg-brand-600 items-center justify-center shadow-pop mb-5">
+          <i className="fa-solid fa-receipt text-white text-xl"></i>
+        </div>
+        <h1 className="text-3xl font-black tracking-tight leading-tight">
+          Welcome to <span className="text-brand-600">SplitRight</span>
+        </h1>
+        <p className="mt-3 text-slate-500 text-base max-w-xs mx-auto">
+          Sign in to start your <b className="text-ink-900">7-day free trial</b>. No charge today.
+        </p>
+      </div>
+
+      <div className="px-5 mt-10">
+        <div className="card p-5 space-y-3">
+          <button onClick={signIn} disabled={loading} className="btn-google">
+            {loading ? (
+              <><i className="fa-solid fa-circle-notch fa-spin"></i> Signing in…</>
+            ) : (
+              <><GoogleG /> Continue with Google</>
+            )}
+          </button>
+
+          <button onClick={signIn} disabled={loading} className="btn-google" style={{ background: '#000', color: '#fff', borderColor: '#000' }}>
+            <i className="fa-brands fa-apple text-lg"></i>
+            <span>Continue with Apple</span>
+          </button>
+
+          <div className="flex items-center gap-3 my-1">
+            <span className="flex-1 h-px bg-slate-200"></span>
+            <span className="text-xs text-slate-400 font-semibold">OR</span>
+            <span className="flex-1 h-px bg-slate-200"></span>
+          </div>
+
+          <button onClick={signIn} disabled={loading} className="btn-secondary">
+            <i className="fa-regular fa-envelope mr-2"></i> Continue with email
+          </button>
+        </div>
+
+        <p className="text-[11px] text-slate-400 text-center mt-4 leading-relaxed">
+          By continuing you agree to our{" "}
+          <a href="#" className="text-brand-600 font-semibold">Terms</a> and{" "}
+          <a href="#" className="text-brand-600 font-semibold">Privacy Policy</a>.
+        </p>
+      </div>
+
+      <div className="flex-1"></div>
+
+      <div className="px-5 pb-8 grid grid-cols-3 gap-3">
+        <Feature icon="fa-bolt"        label="Instant OCR" />
+        <Feature icon="fa-users"       label="Fair split" />
+        <Feature icon="fa-paper-plane" label="One-tap pay" />
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Screen 0b — Paywall (7-day free trial → monthly / yearly)
+   ========================================================================= */
+function PaywallScreen({ user, onSubscribed, onSignOut }) {
+  const [selected, setSelected] = useState("yearly"); // default to best value
+  const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  /* Mocked purchase. On iOS:
+       import { InAppPurchases } from '@capacitor-community/in-app-purchases';
+       const result = await InAppPurchases.purchaseProduct({ productIdentifier });
+     productIdentifier should match what you register in App Store Connect, e.g.:
+       com.yourcompany.splitright.monthly
+       com.yourcompany.splitright.yearly
+     and both should have a 7-day Free Trial introductory offer attached. */
+  const startTrial = () => {
+    setLoading(true);
+    setTimeout(() => {
+      const now = Date.now();
+      const sub = {
+        plan: selected,
+        status: "trial",
+        trialStartedAt: now,
+        trialEndsAt: now + TRIAL_MS,
+        renewsAt: now + TRIAL_MS, // first charge happens at trial end
+        productId: `com.yourcompany.splitright.${selected}`
+      };
+      onSubscribed(sub);
+    }, 900);
+  };
+
+  const restore = () => {
+    setRestoring(true);
+    // On iOS: await InAppPurchases.restorePurchases();
+    setTimeout(() => {
+      setRestoring(false);
+      alert("No previous purchase found on this account.");
+    }, 800);
+  };
+
+  const plan = PLANS[selected];
+  const firstCharge = new Date(Date.now() + TRIAL_MS).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+  return (
+    <div className="app-shell flex flex-col">
+      <div className="px-5 pt-10">
+        <div className="flex items-center justify-between">
+          <button onClick={onSignOut} className="text-xs text-slate-400 font-semibold">
+            <i className="fa-solid fa-chevron-left mr-1"></i> Sign out
+          </button>
+          <button onClick={restore} className="text-xs text-brand-600 font-semibold">
+            {restoring ? "Restoring…" : "Restore purchases"}
+          </button>
+        </div>
+
+        <div className="mt-8 text-center pop-in">
+          <div className="inline-flex w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 items-center justify-center shadow-pop mb-4">
+            <i className="fa-solid fa-crown text-white text-2xl"></i>
+          </div>
+          <h1 className="text-[28px] font-black leading-tight tracking-tight">
+            Try SplitRight free<br/>for 7 days
+          </h1>
+          <p className="mt-2 text-slate-500 text-sm max-w-xs mx-auto">
+            Unlimited receipts, unlimited splits, every payment method.
+          </p>
+        </div>
+      </div>
+
+      <div className="px-5 mt-6 space-y-3">
+        <PlanRow
+          plan={PLANS.yearly}
+          selected={selected === "yearly"}
+          onSelect={() => setSelected("yearly")}
+          highlight="Best value"
+        />
+        <PlanRow
+          plan={PLANS.monthly}
+          selected={selected === "monthly"}
+          onSelect={() => setSelected("monthly")}
+        />
+      </div>
+
+      <div className="px-5 mt-5">
+        <div className="card p-4">
+          <BenefitRow icon="fa-receipt"   text="Scan unlimited receipts with OCR" />
+          <BenefitRow icon="fa-users"     text="Split with unlimited people per bill" />
+          <BenefitRow icon="fa-credit-card" text="Send Venmo, Cash App & PayPal requests" />
+          <BenefitRow icon="fa-clock-rotate-left" text="Save & re-open past splits" />
+          <BenefitRow icon="fa-ban" text="No ads. Ever." last />
+        </div>
+      </div>
+
+      <div className="flex-1"></div>
+
+      <div className="action-bar">
+        <button className="btn-primary" onClick={startTrial} disabled={loading}>
+          {loading ? (
+            <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Starting trial…</>
+          ) : (
+            <>Start 7-day free trial</>
+          )}
+        </button>
+        <p className="text-[11px] text-slate-500 text-center mt-2 leading-relaxed px-2">
+          Free for 7 days, then <b>${plan.price.toFixed(2)}/{plan.per}</b> starting <b>{firstCharge}</b>.<br/>
+          Cancel anytime in Settings · Auto-renews until canceled.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PlanRow({ plan, selected, onSelect, highlight }) {
+  const monthlyEquiv = plan.id === "yearly" ? (plan.price / 12) : null;
+  return (
+    <button onClick={onSelect} className={`plan-card text-left w-full ${selected ? "is-on" : ""}`}>
+      <div className="flex items-center gap-3">
+        <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selected ? "border-brand-600 bg-brand-600" : "border-slate-300"}`}>
+          {selected && <i className="fa-solid fa-check text-white text-[10px]"></i>}
+        </span>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-ink-900">{plan.label}</span>
+            {plan.savePct && <span className="badge badge-save">Save {plan.savePct}%</span>}
+            {highlight && plan.savePct && <span className="badge badge-trial">{highlight}</span>}
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            7-day free trial, then ${plan.price.toFixed(2)}/{plan.per}
+            {monthlyEquiv && <> · just ${monthlyEquiv.toFixed(2)}/mo</>}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-lg font-extrabold">${plan.price.toFixed(2)}</div>
+          <div className="text-[10px] text-slate-400 uppercase tracking-wider">/{plan.per}</div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function BenefitRow({ icon, text, last }) {
+  return (
+    <div className={`flex items-center gap-3 py-2.5 ${last ? "" : "border-b border-slate-100"}`}>
+      <span className="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center">
+        <i className={`fa-solid ${icon} text-sm`}></i>
+      </span>
+      <span className="text-sm font-semibold text-ink-900">{text}</span>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Account screen — manage subscription
+   ========================================================================= */
+function AccountScreen({ user, subscription, onClose, onSignOut, onCancel }) {
+  const plan = subscription && PLANS[subscription.plan];
+  const daysLeft = subscription
+    ? Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / (24 * 60 * 60 * 1000)))
+    : 0;
+  const endsLabel = subscription
+    ? new Date(subscription.renewsAt).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
+    : "";
+
+  return (
+    <div className="app-shell flex flex-col">
+      <Header title="Account" onBack={onClose} />
+
+      <div className="px-5 mt-2">
+        <div className="card p-5 flex items-center gap-4">
+          <span className="avatar lg" style={{ background: "#6366F1" }}>
+            {initialsOf(user.name)}
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-ink-900 truncate">{user.name}</div>
+            <div className="text-sm text-slate-500 truncate">{user.email}</div>
+          </div>
+          <span className="chip" style={{ background: "#EEF2FF", color: "#4338CA" }}>
+            <i className="fa-brands fa-google text-[10px]"></i> Google
+          </span>
+        </div>
+      </div>
+
+      <div className="px-5 mt-4">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-2">Subscription</h2>
+        <div className="card p-5">
+          {subscription?.status === "trial" && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="badge badge-trial">Free trial</span>
+                <span className="text-xs font-semibold text-slate-500">{daysLeft} day{daysLeft === 1 ? "" : "s"} left</span>
+              </div>
+              <div className="mt-3 font-bold text-ink-900">{plan?.label} plan</div>
+              <div className="text-sm text-slate-500 mt-0.5">
+                First charge of <b className="text-ink-900">${plan?.price.toFixed(2)}</b> on <b className="text-ink-900">{endsLabel}</b>
+              </div>
+            </>
+          )}
+          {subscription?.status === "active" && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="badge badge-save">Active</span>
+                <span className="text-xs font-semibold text-slate-500">Renews {endsLabel}</span>
+              </div>
+              <div className="mt-3 font-bold text-ink-900">{plan?.label} plan</div>
+              <div className="text-sm text-slate-500 mt-0.5">${plan?.price.toFixed(2)} / {plan?.per}</div>
+            </>
+          )}
+          {subscription?.status === "canceled" && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="badge" style={{ background: "#FEE2E2", color: "#991B1B" }}>Canceled</span>
+              </div>
+              <div className="mt-3 font-bold text-ink-900">Access until {endsLabel}</div>
+              <div className="text-sm text-slate-500 mt-0.5">No further charges.</div>
+            </>
+          )}
+
+          {subscription?.status !== "canceled" && (
+            <button onClick={onCancel} className="btn-secondary mt-4">
+              <i className="fa-regular fa-circle-xmark mr-2"></i> Cancel subscription
+            </button>
+          )}
+          <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
+            On iOS, manage your subscription in Settings → Apple ID → Subscriptions.
+          </p>
+        </div>
+      </div>
+
+      <div className="px-5 mt-4">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-2">Legal</h2>
+        <div className="card overflow-hidden">
+          <LinkRow icon="fa-file-lines" label="Terms of Service" />
+          <LinkRow icon="fa-shield-halved" label="Privacy Policy" />
+          <LinkRow icon="fa-headset" label="Contact support" last />
+        </div>
+      </div>
+
+      <div className="px-5 mt-4">
+        <button onClick={onSignOut} className="btn-secondary text-red-600">
+          <i className="fa-solid fa-right-from-bracket mr-2"></i> Sign out
+        </button>
+      </div>
+
+      <div className="flex-1"></div>
+      <div className="text-center text-[11px] text-slate-400 pb-6">SplitRight · v1.0.0</div>
+    </div>
+  );
+}
+
+function LinkRow({ icon, label, last }) {
+  return (
+    <a href="#" className={`flex items-center gap-3 p-4 ${last ? "" : "border-b border-slate-100"} active:bg-slate-50`}>
+      <span className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+        <i className={`fa-solid ${icon}`}></i>
+      </span>
+      <span className="flex-1 font-semibold text-sm text-ink-900">{label}</span>
+      <i className="fa-solid fa-chevron-right text-slate-400 text-xs"></i>
+    </a>
+  );
+}
+
+/* =========================================================================
    Root app
    ========================================================================= */
 function App() {
-  /* Screens: scan → people → items → tip → summary → send */
+  /* ---- Auth + subscription (persisted) ---- */
+  const initial = loadState() || {};
+  const [user, setUser] = useState(initial.user || null);
+  const [subscription, setSubscription] = useState(initial.subscription || null);
+  const [showAccount, setShowAccount] = useState(false);
+
+  // Persist whenever user/subscription changes
+  useEffect(() => { saveState({ user, subscription }); }, [user, subscription]);
+
+  // Auto-promote a finished trial into "active" so the demo behaves correctly
+  // (in production, StoreKit / your backend is the source of truth)
+  useEffect(() => {
+    if (subscription?.status === "trial" && Date.now() >= subscription.trialEndsAt) {
+      const plan = PLANS[subscription.plan];
+      const periodMs = plan.per === "year" ? 365 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+      setSubscription({ ...subscription, status: "active", renewsAt: Date.now() + periodMs });
+    }
+  }, [subscription]);
+
+  const hasAccess =
+    subscription &&
+    (subscription.status === "trial" || subscription.status === "active" ||
+     (subscription.status === "canceled" && Date.now() < subscription.renewsAt));
+
+  /* ---- App state ---- */
   const [screen, setScreen] = useState("scan");
   const [people, setPeople] = useState(STARTER_PEOPLE);
   const [items, setItems] = useState(DUMMY_RECEIPT.items);
@@ -999,9 +1425,73 @@ function App() {
     setScreen("scan");
   };
 
+  /* ---- Auth handlers ---- */
+  const handleSignedIn = (u) => {
+    setUser(u);
+    // If they already had a subscription saved (e.g. came back), keep it.
+  };
+  const handleSubscribed = (sub) => setSubscription(sub);
+  const handleSignOut = () => {
+    setUser(null);
+    setSubscription(null);
+    setShowAccount(false);
+    saveState({ user: null, subscription: null });
+    reset();
+  };
+  const handleCancel = () => {
+    if (!subscription) return;
+    if (!confirm("Cancel your subscription? You'll keep access until the end of your current period.")) return;
+    setSubscription({ ...subscription, status: "canceled" });
+    showToast("Subscription canceled");
+  };
+
+  /* ---- Gate: sign-in → paywall → app ---- */
+  if (!user) {
+    return (
+      <>
+        <SignInScreen onSignedIn={handleSignedIn} />
+        <Toast message={toast} onDone={() => setToast("")} />
+      </>
+    );
+  }
+  if (!hasAccess) {
+    return (
+      <>
+        <PaywallScreen
+          user={user}
+          onSubscribed={handleSubscribed}
+          onSignOut={handleSignOut}
+        />
+        <Toast message={toast} onDone={() => setToast("")} />
+      </>
+    );
+  }
+  if (showAccount) {
+    return (
+      <>
+        <AccountScreen
+          user={user}
+          subscription={subscription}
+          onClose={() => setShowAccount(false)}
+          onSignOut={handleSignOut}
+          onCancel={handleCancel}
+        />
+        <Toast message={toast} onDone={() => setToast("")} />
+      </>
+    );
+  }
+
+  /* ---- Main flow ---- */
   let body = null;
   if (screen === "scan") {
-    body = <ScanScreen onScan={() => setScreen("people")} />;
+    body = (
+      <ScanScreen
+        onScan={() => setScreen("people")}
+        user={user}
+        subscription={subscription}
+        onOpenAccount={() => setShowAccount(true)}
+      />
+    );
   } else if (screen === "people") {
     body = (
       <PeopleScreen
