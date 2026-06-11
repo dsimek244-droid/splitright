@@ -101,6 +101,72 @@ const initialsOf = (name) =>
     .toUpperCase();
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+/* Downscale a File/Blob into a small JPEG data URL so we don't ship a
+   10MB photo over the wire. Keeps the long edge at maxDim and re-encodes
+   at the given quality. Returns a "data:image/jpeg;base64,..." string. */
+async function downscaleImage(file, maxDim = 1280, quality = 0.82) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+/* Heuristic parser used when we fall back to Tesseract.js client-OCR.
+   Walks each line, recognises "$12.34", "12.34", "12,34" at the end of a
+   line, and pulls everything before it as the item name. Skips totals /
+   tax / tip / subtotal lines. */
+function parseReceiptText(text) {
+  const lines = (text || "")
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  const SKIP = /^(sub\s*total|subtotal|total|tax|gst|hst|vat|tip|gratuity|service|charge|change|cash|visa|mastercard|amex|debit|credit|amount|balance|due|paid|thank|approval|auth|order|receipt|table|server|guest|date|time|tender|tendered|invoice|cust)/i;
+  const PRICE = /(\d{1,4}[.,]\d{2})\s*$/;
+
+  const items = [];
+  let restaurant = null;
+  let taxRate = 0.0875;
+
+  // First non-empty line is usually the merchant name
+  for (const l of lines.slice(0, 4)) {
+    if (l.length >= 3 && !PRICE.test(l) && /[a-z]/i.test(l)) { restaurant = l; break; }
+  }
+
+  let subtotal = 0, taxAmt = 0;
+  for (const line of lines) {
+    const m = line.match(PRICE);
+    if (!m) continue;
+    const priceStr = m[1].replace(",", ".");
+    const price = parseFloat(priceStr);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    const namePart = line.slice(0, line.length - m[0].length).trim()
+      .replace(/^\d+\s*x?\s+/i, "")    // strip leading qty like "2x "
+      .replace(/[#@$]+\s*$/, "")
+      .replace(/\s{2,}/g, " ");
+    if (!namePart) continue;
+    if (SKIP.test(namePart)) {
+      const lower = namePart.toLowerCase();
+      if (/sub\s*total|subtotal/.test(lower)) subtotal = price;
+      else if (/tax|gst|hst|vat/.test(lower)) taxAmt = price;
+      continue;
+    }
+    if (price > 500) continue; // sanity: a single line item over $500 is rare
+    items.push({ name: namePart.replace(/^\W+/, "").slice(0, 80), price });
+  }
+  if (subtotal > 0 && taxAmt > 0) taxRate = +(taxAmt / subtotal).toFixed(4);
+  return {
+    restaurant: restaurant || "Receipt",
+    items,
+    taxRate: Math.max(0, Math.min(0.2, taxRate))
+  };
+}
+
 /* Compute per-person totals.
    For each item, divide the price evenly between assigned people.
    Tax is allocated proportionally to each person's subtotal.
@@ -208,22 +274,110 @@ function Toast({ message, onDone }) {
 
 /* =========================================================================
    Screen 1 — Splash / Scan Receipt
+   Uses the real device camera via <input type="file" capture="environment">.
+   Sends the downscaled photo to POST /api/scan-receipt; if the server has
+   no OpenAI key (or fails), falls back to Tesseract.js in-browser OCR with
+   a real progress bar. Then hands the parsed items off to ReviewItemsScreen.
    ========================================================================= */
-function ScanScreen({ onScan, user, subscription, onOpenAccount }) {
-  const [scanning, setScanning] = useState(false);
-
-  const startScan = () => {
-    setScanning(true);
-    // Simulate OCR — in a real native build this would call a camera + OCR pipeline.
-    setTimeout(() => {
-      setScanning(false);
-      onScan();
-    }, 1800);
-  };
+function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, onOpenAccount }) {
+  const [phase, setPhase] = useState("idle"); // idle | reading | ocr | error
+  const [progress, setProgress] = useState(0);
+  const [statusLabel, setStatusLabel] = useState("");
+  const [error, setError] = useState("");
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const fileRef = useRef(null);
 
   const daysLeft = subscription?.status === "trial"
     ? Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / (24 * 60 * 60 * 1000)))
     : null;
+
+  const openCamera = () => {
+    setError("");
+    if (fileRef.current) {
+      fileRef.current.value = ""; // allow re-picking the same file
+      fileRef.current.click();
+    }
+  };
+
+  const onPickFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhase("reading");
+    setStatusLabel("Preparing photo…");
+    setProgress(5);
+
+    let dataUrl;
+    try {
+      dataUrl = await downscaleImage(file, 1280, 0.82);
+    } catch (err) {
+      setPhase("error");
+      setError("Couldn't read that photo. Try another shot.");
+      return;
+    }
+    setPreviewUrl(dataUrl);
+    setProgress(20);
+    setStatusLabel("Reading items with AI…");
+
+    // 1) Try the server endpoint (OpenAI vision)
+    try {
+      const r = await fetch("/api/scan-receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: dataUrl })
+      });
+      const data = await r.json();
+      if (data?.ok && Array.isArray(data.items) && data.items.length > 0) {
+        setProgress(100);
+        const items = data.items.map((it) => ({
+          id: uid(), name: it.name, price: Number(it.price) || 0
+        }));
+        onScanned({ restaurant: data.restaurant || "Receipt", items, taxRate: data.taxRate ?? 0.0875 });
+        return;
+      }
+      // 2) Server signaled fall-back to client OCR (or returned no items)
+      setStatusLabel("Reading items on device…");
+      await runClientOcr(dataUrl);
+    } catch (err) {
+      setStatusLabel("Reading items on device…");
+      await runClientOcr(dataUrl);
+    }
+  };
+
+  const runClientOcr = async (dataUrl) => {
+    setPhase("ocr");
+    setProgress(25);
+    if (typeof window.Tesseract === "undefined") {
+      setPhase("error");
+      setError("OCR engine didn't load. Check your connection and try again.");
+      return;
+    }
+    try {
+      const res = await window.Tesseract.recognize(dataUrl, "eng", {
+        logger: (m) => {
+          if (m.status === "recognizing text") {
+            setProgress(25 + Math.round(m.progress * 70));
+          } else if (m.status) {
+            setStatusLabel(m.status[0].toUpperCase() + m.status.slice(1) + "…");
+          }
+        }
+      });
+      const text = res?.data?.text || "";
+      const parsed = parseReceiptText(text);
+      setProgress(100);
+      if (parsed.items.length === 0) {
+        // OCR ran but found nothing parseable — send empty list, user can add manually
+        onScanned({ restaurant: parsed.restaurant, items: [], taxRate: parsed.taxRate, manual: true });
+        return;
+      }
+      const items = parsed.items.map((it) => ({ id: uid(), name: it.name, price: it.price }));
+      onScanned({ restaurant: parsed.restaurant, items, taxRate: parsed.taxRate });
+    } catch (err) {
+      setPhase("error");
+      setError("Couldn't read the receipt. Try a clearer photo, or enter items manually.");
+    }
+  };
+
+  const busy = phase === "reading" || phase === "ocr";
 
   return (
     <div className="app-shell flex flex-col">
@@ -255,29 +409,25 @@ function ScanScreen({ onScan, user, subscription, onOpenAccount }) {
           <span className="text-brand-600">the right way.</span>
         </h1>
         <p className="mt-3 text-slate-500 text-base">
-          Scan the receipt. Tap who ordered what. Send payment requests in seconds.
+          Snap a photo of the receipt. We'll read the items, then you tap who ordered what.
         </p>
       </div>
 
       <div className="px-5 mt-8">
         <div className="card p-4">
           <div className="relative rounded-2xl overflow-hidden bg-slate-900 aspect-[4/5]">
-            {/* Faux receipt preview */}
-            <div className="absolute inset-4 bg-white rounded-xl p-4 text-[11px] leading-relaxed text-slate-700 shadow-xl font-mono">
-              <div className="text-center font-bold tracking-widest">THE IRON SKILLET</div>
-              <div className="text-center text-slate-400">123 Main St · Table 14</div>
-              <div className="border-t border-dashed my-2"></div>
-              {DUMMY_RECEIPT.items.slice(0, 6).map((it) => (
-                <div key={it.id} className="flex justify-between">
-                  <span className="truncate pr-2">{it.name}</span>
-                  <span>{fmt(it.price)}</span>
-                </div>
-              ))}
-              <div className="border-t border-dashed my-2"></div>
-              <div className="flex justify-between font-bold">
-                <span>Subtotal</span><span>{fmt(DUMMY_RECEIPT.subtotal)}</span>
+            {previewUrl ? (
+              <img src={previewUrl} alt="Your receipt" className="absolute inset-0 w-full h-full object-cover" />
+            ) : (
+              <div className="absolute inset-4 bg-white rounded-xl p-4 text-[11px] leading-relaxed text-slate-700 shadow-xl font-mono">
+                <div className="text-center font-bold tracking-widest">YOUR RECEIPT</div>
+                <div className="text-center text-slate-400">Tap "Scan receipt" to snap a photo</div>
+                <div className="border-t border-dashed my-2"></div>
+                <div className="flex justify-between text-slate-300"><span>Item</span><span>$0.00</span></div>
+                <div className="flex justify-between text-slate-300"><span>Item</span><span>$0.00</span></div>
+                <div className="flex justify-between text-slate-300"><span>Item</span><span>$0.00</span></div>
               </div>
-            </div>
+            )}
 
             {/* Frame corners */}
             <div className="absolute inset-3 pointer-events-none">
@@ -287,34 +437,70 @@ function ScanScreen({ onScan, user, subscription, onOpenAccount }) {
               <span className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-white/80 rounded-br-lg"></span>
             </div>
 
-            {scanning && <div className="scanline"></div>}
+            {busy && <div className="scanline"></div>}
 
-            <div className="absolute bottom-3 left-0 right-0 text-center text-white/90 text-xs font-semibold">
-              {scanning ? "Reading items…" : "Align receipt within the frame"}
-            </div>
+            {busy && (
+              <div className="absolute left-3 right-3 bottom-3">
+                <div className="bg-black/55 backdrop-blur rounded-xl px-3 py-2.5 text-white">
+                  <div className="flex items-center justify-between text-[12px] font-semibold">
+                    <span>{statusLabel}</span>
+                    <span className="tabular-nums">{progress}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 rounded-full bg-white/20 overflow-hidden">
+                    <div className="h-full bg-white" style={{ width: `${progress}%`, transition: "width 200ms ease" }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!busy && !previewUrl && (
+              <div className="absolute bottom-3 left-0 right-0 text-center text-white/90 text-xs font-semibold">
+                Align receipt within the frame
+              </div>
+            )}
           </div>
+
+          {error && (
+            <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+              <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>{error}
+            </div>
+          )}
         </div>
       </div>
 
       <div className="px-5 mt-6 grid grid-cols-3 gap-3">
-        <Feature icon="fa-bolt"        label="Instant OCR" />
+        <Feature icon="fa-camera"      label="Real scan" />
         <Feature icon="fa-users"       label="Fair split" />
         <Feature icon="fa-paper-plane" label="One-tap pay" />
       </div>
 
       <div className="flex-1"></div>
 
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={onPickFile}
+        className="hidden"
+      />
+
       <div className="action-bar">
-        <button className="btn-primary" onClick={startScan} disabled={scanning}>
-          {scanning ? (
-            <span><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Scanning receipt…</span>
+        <button className="btn-primary" onClick={openCamera} disabled={busy}>
+          {busy ? (
+            <span><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Reading receipt…</span>
           ) : (
             <span><i className="fa-solid fa-camera mr-2"></i> Scan receipt</span>
           )}
         </button>
-        <button className="mt-2 btn-ghost w-full text-center" onClick={onScan}>
-          Or use sample receipt →
-        </button>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <button className="btn-ghost text-center" onClick={onSkipManual} disabled={busy}>
+            Enter manually
+          </button>
+          <button className="btn-ghost text-center" onClick={onUseSample} disabled={busy}>
+            Try sample →
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -327,6 +513,124 @@ function Feature({ icon, label }) {
         <i className={`fa-solid ${icon}`}></i>
       </div>
       <span className="text-xs font-semibold text-slate-700">{label}</span>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Screen 1b — Review scanned items (or enter them by hand)
+   Shows the items we extracted from the photo (or an empty list for manual
+   entry). Every row is editable; user can fix names, prices, add or
+   remove lines, and rename the restaurant before moving on.
+   ========================================================================= */
+function ReviewItemsScreen({ initial, source, onBack, onNext }) {
+  const [restaurant, setRestaurant] = useState(initial?.restaurant || "Receipt");
+  const [items, setItems] = useState(
+    (initial?.items && initial.items.length > 0)
+      ? initial.items.map((it) => ({ id: it.id || uid(), name: it.name, price: Number(it.price) || 0 }))
+      : []
+  );
+
+  const subtotal = items.reduce((s, i) => s + (Number(i.price) || 0), 0);
+
+  const updateItem = (id, patch) =>
+    setItems((cur) => cur.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  const removeItem = (id) => setItems((cur) => cur.filter((it) => it.id !== id));
+  const addItem = () =>
+    setItems((cur) => [...cur, { id: uid(), name: "", price: 0 }]);
+
+  const ready = items.length > 0 && items.every((it) => it.name.trim() && Number(it.price) > 0);
+
+  const headline =
+    source === "ai"     ? "We found these items" :
+    source === "ocr"    ? "We read these from the photo" :
+    source === "manual" ? "Add your items" :
+                          "Review the items";
+  const subhead =
+    source === "ai"     ? "Tap any row to fix it. Add or remove anything that's wrong." :
+    source === "ocr"    ? "OCR isn't perfect — double-check names and prices, then continue." :
+    source === "manual" ? "Type each item from the receipt. Tap Add when you're done." :
+                          "Make sure everything looks right before you split.";
+
+  return (
+    <div className="app-shell flex flex-col">
+      <Header title={headline} subtitle={subhead} onBack={onBack} />
+
+      <div className="px-5">
+        <div className="card p-4">
+          <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Restaurant</label>
+          <input
+            value={restaurant}
+            onChange={(e) => setRestaurant(e.target.value)}
+            placeholder="Restaurant name"
+            className="mt-1 w-full bg-slate-100 rounded-xl px-4 py-3 text-base font-semibold outline-none focus:ring-2 focus:ring-brand-500/40"
+          />
+        </div>
+      </div>
+
+      <div className="px-5 mt-4 mb-2 flex items-baseline justify-between">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
+          Items
+        </h2>
+        <span className="text-xs text-slate-400">{items.length} · {fmt(subtotal)}</span>
+      </div>
+
+      <div className="px-5 space-y-2">
+        {items.length === 0 && (
+          <div className="card p-5 text-center text-slate-500 text-sm">
+            No items yet. Tap <b className="text-ink-900">Add item</b> to enter the first one.
+          </div>
+        )}
+        {items.map((it) => (
+          <div key={it.id} className="card p-3">
+            <div className="flex items-center gap-2">
+              <input
+                value={it.name}
+                onChange={(e) => updateItem(it.id, { name: e.target.value })}
+                placeholder="Item name"
+                className="flex-1 bg-slate-50 rounded-xl px-3 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-500/40"
+              />
+              <div className="relative w-24">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0"
+                  value={Number.isFinite(it.price) ? it.price : ""}
+                  onChange={(e) => updateItem(it.id, { price: parseFloat(e.target.value) || 0 })}
+                  placeholder="0.00"
+                  className="w-full bg-slate-50 rounded-xl pl-6 pr-2 py-2.5 text-sm font-bold text-right outline-none focus:ring-2 focus:ring-brand-500/40 tabular-nums"
+                />
+              </div>
+              <button
+                onClick={() => removeItem(it.id)}
+                className="w-9 h-9 rounded-xl bg-slate-50 text-slate-400 active:scale-95 hover:text-red-500"
+                aria-label="Remove item"
+              >
+                <i className="fa-solid fa-trash text-sm"></i>
+              </button>
+            </div>
+          </div>
+        ))}
+
+        <button onClick={addItem} className="w-full mt-1 btn-secondary">
+          <i className="fa-solid fa-plus mr-2"></i> Add item
+        </button>
+      </div>
+
+      <div className="flex-1"></div>
+
+      <div className="action-bar">
+        <button className="btn-primary" onClick={() => onNext({ restaurant: restaurant.trim() || "Receipt", items })} disabled={!ready}>
+          Continue <i className="fa-solid fa-arrow-right ml-2"></i>
+        </button>
+        {!ready && (
+          <p className="mt-2 text-center text-xs text-slate-500">
+            Add at least one item with a name and a price.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -462,7 +766,7 @@ function PeopleScreen({ people, setPeople, onBack, onNext }) {
 /* =========================================================================
    Screen 3 — Receipt Items: assign to one or more people
    ========================================================================= */
-function ItemsScreen({ items, setItems, people, assignments, setAssignments, onBack, onNext }) {
+function ItemsScreen({ items, setItems, people, assignments, setAssignments, restaurant, onBack, onNext }) {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("");
@@ -546,7 +850,7 @@ function ItemsScreen({ items, setItems, people, assignments, setAssignments, onB
 
       <div className="px-5 mt-1 mb-2 flex items-baseline justify-between">
         <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
-          {DUMMY_RECEIPT.restaurant}
+          {restaurant || DUMMY_RECEIPT.restaurant}
         </h2>
         <span className="text-xs text-slate-400">{items.length} items</span>
       </div>
@@ -831,13 +1135,14 @@ function SummaryScreen({ totals, people, restaurant, onBack, onSend }) {
    ========================================================================= */
 function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
   const [yourHandle, setYourHandle] = useState("@you");
-  const [provider, setProvider] = useState("venmo");
+  // Only PayPal is wired up — Venmo and Cash App are temporarily disabled.
+  const [provider, setProvider] = useState("paypal");
   const [copied, setCopied] = useState(null);
 
   const providers = [
-    { id: "venmo",   label: "Venmo",    icon: "fa-v",          color: "#3D95CE" },
-    { id: "cashapp", label: "Cash App", icon: "fa-dollar-sign", color: "#00D632" },
-    { id: "paypal",  label: "PayPal",   icon: "fa-paypal",     color: "#003087" }
+    { id: "venmo",   label: "Venmo",    icon: "fa-v",          color: "#3D95CE", disabled: true,  note: "Coming soon" },
+    { id: "cashapp", label: "Cash App", icon: "fa-dollar-sign", color: "#00D632", disabled: true,  note: "Coming soon" },
+    { id: "paypal",  label: "PayPal",   icon: "fa-paypal",     color: "#003087", disabled: false }
   ];
 
   const messageFor = (b) =>
@@ -848,24 +1153,18 @@ function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
     `— Split with SplitRight`;
 
   /* Build a deep link that opens the chosen app pre-filled with the amount.
-     Falls back to web URLs which work on desktop too. */
+     Currently only PayPal is enabled — Venmo and Cash App are stubbed out. */
   const linkFor = (b) => {
     const amount = b.total.toFixed(2);
-    const note = encodeURIComponent(`${restaurant} · split with SplitRight`);
     const handle = encodeURIComponent(yourHandle.replace(/^@/, ""));
-    switch (provider) {
-      case "venmo":
-        // Venmo "charge" link
-        return `https://venmo.com/?txn=charge&audience=private&recipients=${handle}&amount=${amount}&note=${note}`;
-      case "cashapp":
-        // Cash App pay link (user adds note manually)
-        return `https://cash.app/$${handle}/${amount}`;
-      case "paypal":
-        return `https://paypal.me/${handle}/${amount}`;
-      default:
-        return "#";
+    if (provider === "paypal") {
+      return `https://paypal.me/${handle}/${amount}`;
     }
+    return "#"; // venmo / cashapp disabled
   };
+
+  const currentProvider = providers.find((p) => p.id === provider);
+  const providerDisabled = !!currentProvider?.disabled;
 
   const copyMessage = async (b) => {
     const text = messageFor(b);
@@ -925,22 +1224,44 @@ function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
           />
 
           <div className="mt-3 grid grid-cols-3 gap-2">
-            {providers.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setProvider(p.id)}
-                className={`tip-option ${provider === p.id ? "is-on" : ""}`}
-              >
-                <div
-                  className="w-8 h-8 rounded-lg mx-auto flex items-center justify-center text-white text-sm"
-                  style={{ background: p.color }}
+            {providers.map((p) => {
+              const isOn = provider === p.id;
+              const handleClick = () => {
+                if (p.disabled) {
+                  showToast(`${p.label} is coming soon`);
+                  return;
+                }
+                setProvider(p.id);
+              };
+              return (
+                <button
+                  key={p.id}
+                  onClick={handleClick}
+                  aria-disabled={p.disabled || undefined}
+                  className={`tip-option ${isOn ? "is-on" : ""} ${p.disabled ? "opacity-50" : ""} relative`}
                 >
-                  <i className={`fa-solid ${p.icon}`}></i>
-                </div>
-                <div className="text-xs mt-1">{p.label}</div>
-              </button>
-            ))}
+                  <div
+                    className="w-8 h-8 rounded-lg mx-auto flex items-center justify-center text-white text-sm"
+                    style={{ background: p.color }}
+                  >
+                    <i className={`fa-solid ${p.icon}`}></i>
+                  </div>
+                  <div className="text-xs mt-1">{p.label}</div>
+                  {p.disabled && (
+                    <div className="text-[10px] mt-0.5 font-semibold text-slate-400 uppercase tracking-wide">
+                      Soon
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
+          {providerDisabled && (
+            <div className="mt-3 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
+              <i className="fa-solid fa-circle-info mr-1.5 text-slate-400"></i>
+              Venmo and Cash App are coming soon. Use PayPal, or copy the message and send it however you like.
+            </div>
+          )}
         </div>
       </div>
 
@@ -962,15 +1283,26 @@ function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
                 <div className="font-bold">{b.person.name}</div>
                 <div className="text-xs text-slate-500">owes {fmt(b.total)}</div>
               </div>
-              <a
-                href={linkFor(b)}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3 py-2 rounded-xl text-white text-xs font-bold active:scale-95"
-                style={{ background: providers.find((p) => p.id === provider).color }}
-              >
-                Request <i className="fa-solid fa-arrow-up-right-from-square ml-1 text-[10px]"></i>
-              </a>
+              {providerDisabled ? (
+                <button
+                  onClick={() => showToast(`${currentProvider.label} is coming soon`)}
+                  className="px-3 py-2 rounded-xl text-white text-xs font-bold active:scale-95 opacity-60 cursor-not-allowed"
+                  style={{ background: currentProvider.color }}
+                  title="Coming soon"
+                >
+                  Soon <i className="fa-solid fa-lock ml-1 text-[10px]"></i>
+                </button>
+              ) : (
+                <a
+                  href={linkFor(b)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 rounded-xl text-white text-xs font-bold active:scale-95"
+                  style={{ background: currentProvider.color }}
+                >
+                  Request <i className="fa-solid fa-arrow-up-right-from-square ml-1 text-[10px]"></i>
+                </a>
+              )}
             </div>
 
             <pre className="mt-3 bg-slate-50 rounded-xl p-3 text-[12px] leading-relaxed text-slate-700 whitespace-pre-wrap font-sans">
@@ -1389,6 +1721,8 @@ function App() {
   const [assignments, setAssignments] = useState(STARTER_ASSIGNMENTS);
   const [tipPct, setTipPct] = useState(0.20);
   const [taxRate, setTaxRate] = useState(DUMMY_RECEIPT.taxRate);
+  const [restaurant, setRestaurant] = useState(DUMMY_RECEIPT.restaurant);
+  const [pendingScan, setPendingScan] = useState(null); // { restaurant, items, taxRate, source }
   const [toast, setToast] = useState("");
 
   const showToast = useCallback((m) => setToast(m), []);
@@ -1422,7 +1756,43 @@ function App() {
     setAssignments(STARTER_ASSIGNMENTS);
     setTipPct(0.20);
     setTaxRate(DUMMY_RECEIPT.taxRate);
+    setRestaurant(DUMMY_RECEIPT.restaurant);
+    setPendingScan(null);
     setScreen("scan");
+  };
+
+  /* ---- Scan flow handlers ---- */
+  // Called by ScanScreen after either the AI endpoint or Tesseract returns.
+  const handleScanned = (payload) => {
+    const source = payload.manual ? "ocr" : "ai";
+    setPendingScan({
+      restaurant: payload.restaurant || "Receipt",
+      items: payload.items || [],
+      taxRate: Number.isFinite(payload.taxRate) ? payload.taxRate : 0.0875,
+      source
+    });
+    setScreen("review");
+  };
+  const handleUseSample = () => {
+    setPendingScan({
+      restaurant: DUMMY_RECEIPT.restaurant,
+      items: DUMMY_RECEIPT.items.map((it) => ({ id: it.id, name: it.name, price: it.price })),
+      taxRate: DUMMY_RECEIPT.taxRate,
+      source: "ai"
+    });
+    setScreen("review");
+  };
+  const handleSkipManual = () => {
+    setPendingScan({ restaurant: "Receipt", items: [], taxRate: 0.0875, source: "manual" });
+    setScreen("review");
+  };
+  // Called by ReviewItemsScreen when the user confirms the items.
+  const handleReviewNext = ({ restaurant: r, items: confirmed }) => {
+    setRestaurant(r);
+    setItems(confirmed.map((it) => ({ id: it.id || uid(), name: it.name.trim(), price: Number(it.price) || 0 })));
+    setAssignments({}); // start with no assignments — user will tap on Items screen
+    setTaxRate(pendingScan?.taxRate ?? taxRate);
+    setScreen("people");
   };
 
   /* ---- Auth handlers ---- */
@@ -1486,10 +1856,21 @@ function App() {
   if (screen === "scan") {
     body = (
       <ScanScreen
-        onScan={() => setScreen("people")}
+        onScanned={handleScanned}
+        onUseSample={handleUseSample}
+        onSkipManual={handleSkipManual}
         user={user}
         subscription={subscription}
         onOpenAccount={() => setShowAccount(true)}
+      />
+    );
+  } else if (screen === "review") {
+    body = (
+      <ReviewItemsScreen
+        initial={pendingScan}
+        source={pendingScan?.source}
+        onBack={() => setScreen("scan")}
+        onNext={handleReviewNext}
       />
     );
   } else if (screen === "people") {
@@ -1497,7 +1878,7 @@ function App() {
       <PeopleScreen
         people={people}
         setPeople={setPeople}
-        onBack={() => setScreen("scan")}
+        onBack={() => setScreen("review")}
         onNext={() => setScreen("items")}
       />
     );
@@ -1509,6 +1890,7 @@ function App() {
         people={people}
         assignments={assignments}
         setAssignments={setAssignments}
+        restaurant={restaurant}
         onBack={() => setScreen("people")}
         onNext={() => setScreen("tip")}
       />
@@ -1530,7 +1912,7 @@ function App() {
       <SummaryScreen
         totals={totals}
         people={people}
-        restaurant={DUMMY_RECEIPT.restaurant}
+        restaurant={restaurant}
         onBack={() => setScreen("tip")}
         onSend={() => setScreen("send")}
       />
@@ -1539,7 +1921,7 @@ function App() {
     body = (
       <SendScreen
         totals={totals}
-        restaurant={DUMMY_RECEIPT.restaurant}
+        restaurant={restaurant}
         onBack={() => setScreen("summary")}
         onDone={reset}
         showToast={showToast}

@@ -15,20 +15,23 @@
 | 2 | **Sign-In screen** — Continue with Google / Apple / Email (mocked, ready to be swapped for real OAuth). State persists in `localStorage`. | ✅ |
 | 3 | **Paywall** — 7-day free trial, then **$4.99/month** or **$39.99/year (save 33%)**, with "Restore purchases", legal-compliant disclosure of price, renewal date, and "cancel anytime" | ✅ |
 | 4 | **Account screen** — shown via avatar in the top-right; displays user, plan, days left in trial, first-charge date, and Cancel Subscription button | ✅ |
-| 5 | **Scan Receipt screen** with simulated OCR animation (1.8s) + "use sample receipt" shortcut; shows a "Trial · Nd left" badge | ✅ |
-| 6 | **People screen** — add/remove people, name + 8-color tag picker, edit colors inline | ✅ |
-| 7 | **Items screen** — receipt items, multi-person assignment via tap-pills, "Everyone" shortcut, add/remove custom items, live "$/person" preview when shared | ✅ |
-| 8 | **Tip selector** — 10% / 15% / 20% / Custom %, live amount preview | ✅ |
-| 9 | **Tax** — adjustable slider (0–15%), pre-filled at 8.75% | ✅ |
-| 10 | **Summary screen** — per-person breakdown (items + tax share + tip share + total), expandable details, grand total card | ✅ |
-| 11 | **Send Requests screen** — generates a payment message per person, "Copy message" + native "Share" + deep links into Venmo / Cash App / PayPal with amount pre-filled | ✅ |
-| 12 | **Dummy receipt pre-loaded** — "The Iron Skillet" with 10 items already assigned across 4 people so you can test every screen instantly | ✅ |
-| 13 | **PWA manifest + iOS meta tags** — installable to home screen, App-Store-wrapper-ready | ✅ |
+| 5 | **🆕 Real receipt scanning** — opens the camera via `<input type="file" capture="environment">` → photo is downscaled and sent to `POST /api/scan-receipt` (OpenAI vision); when no key is configured, falls back to **Tesseract.js in-browser OCR** with a live progress bar. "Try sample" and "Enter manually" shortcuts also available. | ✅ |
+| 6 | **🆕 Review-and-edit screen** — after the scan returns items, every row is inline-editable (name + price), add row / remove row / rename the restaurant. The AI is never expected to be perfect. | ✅ |
+| 7 | **People screen** — add/remove people, name + 8-color tag picker, edit colors inline | ✅ |
+| 8 | **Items screen** — receipt items, multi-person assignment via tap-pills, "Everyone" shortcut, add/remove custom items, live "$/person" preview when shared | ✅ |
+| 9 | **Tip selector** — 10% / 15% / 20% / Custom %, live amount preview | ✅ |
+| 10 | **Tax** — adjustable slider (0–15%), pre-filled at 8.75% | ✅ |
+| 11 | **Summary screen** — per-person breakdown (items + tax share + tip share + total), expandable details, grand total card | ✅ |
+| 12 | **Send Requests screen** — generates a payment message per person, "Copy message" + native "Share". **Only PayPal is wired up — Venmo and Cash App are temporarily disabled** (rendered as "Coming soon" tiles). | ✅ |
+| 13 | **Sample receipt** — "The Iron Skillet" with 10 items so you can test every screen instantly | ✅ |
+| 14 | **PWA manifest + iOS meta tags** — installable to home screen, App-Store-wrapper-ready | ✅ |
 
 ### Flow on first launch
 ```
-Sign-In  →  Paywall  →  Scan  →  People  →  Items  →  Tip & Tax  →  Summary  →  Send
-   ↑           ↑           ↓
+Sign-In  →  Paywall  →  Scan (camera) ──┐
+                        Enter manually ─┤→ Review items → People → Items → Tip & Tax → Summary → Send
+                        Try sample ─────┘
+   ↑           ↑
    └── Sign out / Cancel ──── Account screen (via avatar top-right)
 ```
 Auth + subscription are persisted in `localStorage` under the key `splitright.v1`, so closing and re-opening the tab keeps you signed in and inside your trial. To replay the full first-launch flow, open DevTools → Application → Local Storage → delete `splitright.v1` and refresh.
@@ -37,21 +40,30 @@ Auth + subscription are persisted in `localStorage` under the key `splitright.v1
 
 | Path | Method | Description |
 |------|--------|-------------|
-| `/` | GET | Renders the SplitRight React SPA |
+| `/` | GET | Renders the SplitRight React SPA (HTML shell + CDNs + Tesseract.js) |
+| `/api/scan-receipt` | POST | Body: `{ image: "data:image/jpeg;base64,..." }` → returns `{ ok: true, restaurant, items, taxRate }` from gpt-5-mini vision, OR `{ ok: false, useClientOcr: true, reason }` to signal the client to run Tesseract.js locally |
 | `/static/app.jsx` | GET | The full single-file React app (JSX, compiled in-browser by Babel) |
 | `/static/style.css` | GET | Premium component styling |
 | `/static/manifest.webmanifest` | GET | PWA manifest for installable web app |
 | `/static/favicon.svg` | GET | App icon |
 
-The SPA itself is purely client-side — no server endpoints beyond static asset serving — which keeps it cheap, fast, and 100% Cloudflare-Pages-friendly.
+### Switching on real OpenAI vision
+The endpoint already works — it just needs a key. With no key set, the endpoint returns `{ ok: false, useClientOcr: true, reason: "no-key"}` and the client transparently falls back to Tesseract.js, so the app **always works**.
+```bash
+# local dev
+echo 'OPENAI_API_KEY=sk-...' >> /home/user/webapp/.dev.vars
+# production on Cloudflare Pages
+cd /home/user/webapp && npx wrangler pages secret put OPENAI_API_KEY --project-name webapp
+```
 
 ## Data Architecture
 - **Data Models**:
   - `Person { id, name, color }`
   - `Item   { id, name, price }`
   - `Assignments { [itemId]: [personId, ...] }`
+  - `Receipt { restaurant, items, taxRate }` (from the scan)
   - `TipPct: number (0..1)`, `TaxRate: number (0..1)`
-- **Storage**: In-memory React state only (no persistence yet — see "Next steps").
+- **Storage**: `localStorage` under `splitright.v1` for user + subscription state. Per-receipt state is in React only (cleared on Done / Sign out).
 - **Math** (`computeTotals` in `app.jsx`):
   - Each item's price is split evenly between its assigned people.
   - Tax and tip are computed against the pre-tax subtotal, then **allocated proportionally** to each person based on their item subtotal share. This is the fairest method (people who ate more pay more tax/tip).

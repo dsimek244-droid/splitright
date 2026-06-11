@@ -1,10 +1,103 @@
 import { Hono } from 'hono'
 
-const app = new Hono()
+type Bindings = { OPENAI_API_KEY?: string; OPENAI_BASE_URL?: string }
+const app = new Hono<{ Bindings: Bindings }>()
+
+/* ──────────────────────────────────────────────────────────────────
+   POST /api/scan-receipt
+   Body: { image: "data:image/jpeg;base64,..." }
+   On success:  { ok: true, restaurant, items: [{name, price}], taxRate? }
+   On failure:  { ok: false, useClientOcr: true, reason }  →  client falls
+   back to Tesseract.js in-browser OCR.
+   ────────────────────────────────────────────────────────────────── */
+app.post('/api/scan-receipt', async (c) => {
+  const apiKey =
+    c.env?.OPENAI_API_KEY ||
+    (globalThis as any).process?.env?.OPENAI_API_KEY ||
+    ''
+  const baseUrl =
+    c.env?.OPENAI_BASE_URL ||
+    (globalThis as any).process?.env?.OPENAI_BASE_URL ||
+    'https://api.openai.com/v1'
+
+  let body: any = null
+  try { body = await c.req.json() } catch { /* noop */ }
+  const image = body?.image
+  if (typeof image !== 'string' || !image.startsWith('data:image/')) {
+    return c.json({ ok: false, useClientOcr: true, reason: 'bad-image' })
+  }
+
+  if (!apiKey) {
+    return c.json({ ok: false, useClientOcr: true, reason: 'no-key' })
+  }
+
+  const prompt = [
+    'You are reading a restaurant receipt photo. Extract structured data.',
+    'Return ONLY valid minified JSON, no prose, no markdown fences, matching exactly:',
+    '{"restaurant": string, "items": [{"name": string, "price": number}], "taxRate": number}',
+    '- name: a short human-readable item name (Title Case, no quantity prefix like "1x")',
+    '- price: the per-line total in the receipt currency, as a positive number',
+    '- DO NOT include subtotal, tax, tip, total, gratuity, service charge, or discount lines as items',
+    '- taxRate: tax / subtotal, expressed as a decimal (e.g. 0.0875). If unknown, use 0.0875.',
+    '- restaurant: the merchant / restaurant name printed on the receipt. If unknown, use "Receipt".',
+    'If the image is not a receipt or unreadable, return {"restaurant":"Receipt","items":[],"taxRate":0.0875}.'
+  ].join('\n')
+
+  try {
+    const r = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-5-mini',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: image } }
+          ]
+        }],
+        max_completion_tokens: 1500
+      })
+    })
+
+    if (!r.ok) {
+      return c.json({ ok: false, useClientOcr: true, reason: `upstream-${r.status}` })
+    }
+    const data: any = await r.json()
+    const content: string = data?.choices?.[0]?.message?.content || ''
+    // Strip possible code fences just in case the model wraps the JSON.
+    const cleaned = content.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+    let parsed: any = null
+    try { parsed = JSON.parse(cleaned) } catch {
+      // Try to find the first { ... } block
+      const m = cleaned.match(/\{[\s\S]*\}/)
+      if (m) { try { parsed = JSON.parse(m[0]) } catch {} }
+    }
+    if (!parsed || !Array.isArray(parsed.items)) {
+      return c.json({ ok: false, useClientOcr: true, reason: 'parse-failed' })
+    }
+    const items = parsed.items
+      .map((it: any) => ({
+        name: String(it?.name || '').trim().slice(0, 80),
+        price: Number(it?.price)
+      }))
+      .filter((it: any) => it.name && Number.isFinite(it.price) && it.price > 0)
+
+    return c.json({
+      ok: true,
+      restaurant: String(parsed.restaurant || 'Receipt').slice(0, 80),
+      items,
+      taxRate: Number.isFinite(parsed.taxRate) ? Number(parsed.taxRate) : 0.0875
+    })
+  } catch (e: any) {
+    return c.json({ ok: false, useClientOcr: true, reason: 'fetch-error' })
+  }
+})
 
 // SplitRight - single-page React app served from Hono on Cloudflare Pages.
-// We deliver React/ReactDOM/Babel/Tailwind via CDN and load /static/app.jsx
-// which contains the entire React app in one file (per user requirements).
 app.get('/', (c) => {
   return c.html(`<!DOCTYPE html>
 <html lang="en">
@@ -52,6 +145,7 @@ app.get('/', (c) => {
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body class="bg-slate-50 text-ink-900 antialiased">
   <div id="root"></div>
