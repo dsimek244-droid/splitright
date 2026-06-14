@@ -25,6 +25,7 @@
 | 12 | **Send Requests screen** — generates a payment message per person, "Copy message" + native "Share". **Only PayPal is wired up — Venmo and Cash App are temporarily disabled** (rendered as "Coming soon" tiles). | ✅ |
 | 13 | **Sample receipt** — "The Iron Skillet" with 10 items so you can test every screen instantly | ✅ |
 | 14 | **PWA manifest + iOS meta tags** — installable to home screen, App-Store-wrapper-ready | ✅ |
+| 15 | **🆕 Region & multi-currency** — 17 regions (US, UK, Ireland, Germany, France, Spain, Italy, Netherlands, Switzerland, Canada, Australia, Japan, South Korea, China, India, Brazil, Mexico) and 12 currencies (USD, EUR, GBP, JPY, CAD, AUD, INR, CNY, KRW, BRL, MXN, CHF). Auto-detected from the browser's locale on first launch, picked manually from the Account screen, persisted in `localStorage`. Changes the symbol, decimal places, locale-correct number formatting (€1.234,56 vs $1,234.56), default tip + VAT/tax rates per country, and which payment apps appear on the Send screen. | ✅ |
 
 ### Flow on first launch
 ```
@@ -62,8 +63,11 @@ cd /home/user/webapp && npx wrangler pages secret put OPENAI_API_KEY --project-n
   - `Item   { id, name, price }`
   - `Assignments { [itemId]: [personId, ...] }`
   - `Receipt { restaurant, items, taxRate }` (from the scan)
+  - `Currency { code, symbol, name, locale, decimals, monthly, yearly }` (12 entries)
+  - `Region { code, flag, name, currency, defaultTip, defaultTax, providers }` (17 entries)
   - `TipPct: number (0..1)`, `TaxRate: number (0..1)`
-- **Storage**: `localStorage` under `splitright.v1` for user + subscription state. Per-receipt state is in React only (cleared on Done / Sign out).
+- **Localization**: All money is formatted through `Intl.NumberFormat(locale, { style: "currency", currency })`, so JPY/KRW render with zero decimals, EUR uses `1.234,56`, INR uses the lakh grouping, etc.
+- **Storage**: `localStorage` under `splitright.v1` for user + subscription + region + currency. Per-receipt state is in React only (cleared on Done / Sign out).
 - **Math** (`computeTotals` in `app.jsx`):
   - Each item's price is split evenly between its assigned people.
   - Tax and tip are computed against the pre-tax subtotal, then **allocated proportionally** to each person based on their item subtotal share. This is the fairest method (people who ate more pay more tax/tip).

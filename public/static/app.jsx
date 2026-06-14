@@ -37,6 +37,68 @@ const PLANS = {
 };
 const TRIAL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/* ----------------------------- Currencies ------------------------------- */
+/* Each currency carries its ISO code, symbol, locale for Intl formatting,
+   number of decimals, and the App Store local price tier (roughly
+   matching Apple's tier 5 for monthly / tier 39 for yearly). The local
+   price is what we display on the paywall; on iOS, StoreKit will deliver
+   the exact local price from App Store Connect, so this is just a visual
+   approximation. */
+const CURRENCIES = {
+  USD: { code: "USD", symbol: "$",   name: "US Dollar",        locale: "en-US", decimals: 2, monthly: 4.99,  yearly: 39.99 },
+  EUR: { code: "EUR", symbol: "€",   name: "Euro",             locale: "de-DE", decimals: 2, monthly: 4.99,  yearly: 39.99 },
+  GBP: { code: "GBP", symbol: "£",   name: "British Pound",    locale: "en-GB", decimals: 2, monthly: 4.49,  yearly: 34.99 },
+  JPY: { code: "JPY", symbol: "¥",   name: "Japanese Yen",     locale: "ja-JP", decimals: 0, monthly: 700,   yearly: 5800 },
+  CAD: { code: "CAD", symbol: "CA$", name: "Canadian Dollar",  locale: "en-CA", decimals: 2, monthly: 6.99,  yearly: 54.99 },
+  AUD: { code: "AUD", symbol: "A$",  name: "Australian Dollar",locale: "en-AU", decimals: 2, monthly: 7.99,  yearly: 64.99 },
+  INR: { code: "INR", symbol: "₹",   name: "Indian Rupee",     locale: "en-IN", decimals: 2, monthly: 399,   yearly: 2999 },
+  CNY: { code: "CNY", symbol: "¥",   name: "Chinese Yuan",     locale: "zh-CN", decimals: 2, monthly: 35,    yearly: 288 },
+  KRW: { code: "KRW", symbol: "₩",   name: "Korean Won",       locale: "ko-KR", decimals: 0, monthly: 6500,  yearly: 52000 },
+  BRL: { code: "BRL", symbol: "R$",  name: "Brazilian Real",   locale: "pt-BR", decimals: 2, monthly: 24.90, yearly: 199.90 },
+  MXN: { code: "MXN", symbol: "MX$", name: "Mexican Peso",     locale: "es-MX", decimals: 2, monthly: 99,    yearly: 799 },
+  CHF: { code: "CHF", symbol: "CHF", name: "Swiss Franc",      locale: "de-CH", decimals: 2, monthly: 4.99,  yearly: 39.99 }
+};
+
+/* ----------------------------- Regions ---------------------------------- */
+/* Each region maps to a default currency, default tip % (a tip
+   convention common to that country — Japan/UK tip very little; the US
+   tips 18-20%), default tax/VAT rate, and which payment providers we
+   show on the Send screen. Order matches popular first. */
+const REGIONS = {
+  US: { code: "US", flag: "🇺🇸", name: "United States",   currency: "USD", defaultTip: 0.20, defaultTax: 0.0875, providers: ["venmo", "cashapp", "paypal"] },
+  CA: { code: "CA", flag: "🇨🇦", name: "Canada",          currency: "CAD", defaultTip: 0.15, defaultTax: 0.13,   providers: ["paypal"] },
+  GB: { code: "GB", flag: "🇬🇧", name: "United Kingdom",  currency: "GBP", defaultTip: 0.125,defaultTax: 0.20,   providers: ["paypal"] },
+  IE: { code: "IE", flag: "🇮🇪", name: "Ireland",         currency: "EUR", defaultTip: 0.10, defaultTax: 0.135,  providers: ["paypal"] },
+  DE: { code: "DE", flag: "🇩🇪", name: "Germany",         currency: "EUR", defaultTip: 0.10, defaultTax: 0.07,   providers: ["paypal"] },
+  FR: { code: "FR", flag: "🇫🇷", name: "France",          currency: "EUR", defaultTip: 0.05, defaultTax: 0.10,   providers: ["paypal"] },
+  ES: { code: "ES", flag: "🇪🇸", name: "Spain",           currency: "EUR", defaultTip: 0.05, defaultTax: 0.10,   providers: ["paypal"] },
+  IT: { code: "IT", flag: "🇮🇹", name: "Italy",           currency: "EUR", defaultTip: 0.05, defaultTax: 0.10,   providers: ["paypal"] },
+  NL: { code: "NL", flag: "🇳🇱", name: "Netherlands",     currency: "EUR", defaultTip: 0.05, defaultTax: 0.09,   providers: ["paypal"] },
+  CH: { code: "CH", flag: "🇨🇭", name: "Switzerland",     currency: "CHF", defaultTip: 0.05, defaultTax: 0.077,  providers: ["paypal"] },
+  AU: { code: "AU", flag: "🇦🇺", name: "Australia",       currency: "AUD", defaultTip: 0.10, defaultTax: 0.10,   providers: ["paypal"] },
+  JP: { code: "JP", flag: "🇯🇵", name: "Japan",           currency: "JPY", defaultTip: 0.00, defaultTax: 0.10,   providers: ["paypal"] },
+  KR: { code: "KR", flag: "🇰🇷", name: "South Korea",     currency: "KRW", defaultTip: 0.00, defaultTax: 0.10,   providers: ["paypal"] },
+  CN: { code: "CN", flag: "🇨🇳", name: "China",           currency: "CNY", defaultTip: 0.00, defaultTax: 0.06,   providers: ["paypal"] },
+  IN: { code: "IN", flag: "🇮🇳", name: "India",           currency: "INR", defaultTip: 0.10, defaultTax: 0.05,   providers: ["paypal"] },
+  BR: { code: "BR", flag: "🇧🇷", name: "Brazil",          currency: "BRL", defaultTip: 0.10, defaultTax: 0.10,   providers: ["paypal"] },
+  MX: { code: "MX", flag: "🇲🇽", name: "Mexico",          currency: "MXN", defaultTip: 0.10, defaultTax: 0.16,   providers: ["paypal"] }
+};
+
+/* Detect a sensible default region from the browser locale. Falls back
+   to US so the existing flow stays identical for first-time US users. */
+function detectRegion() {
+  try {
+    const locale = (navigator.languages && navigator.languages[0]) || navigator.language || "en-US";
+    const parts = locale.split(/[-_]/);
+    const cc = (parts[1] || "").toUpperCase();
+    if (REGIONS[cc]) return cc;
+    // Common language → region fallback
+    const langMap = { en: "US", de: "DE", fr: "FR", es: "ES", it: "IT", nl: "NL", ja: "JP", ko: "KR", zh: "CN", pt: "BR", hi: "IN" };
+    const lang = (parts[0] || "en").toLowerCase();
+    return langMap[lang] || "US";
+  } catch { return "US"; }
+}
+
 /* ----------------------------- Dummy data ------------------------------- */
 const DUMMY_RECEIPT = {
   restaurant: "The Iron Skillet",
@@ -90,7 +152,42 @@ const STARTER_ASSIGNMENTS = {
 };
 
 /* ------------------------------ Helpers --------------------------------- */
-const fmt = (n) => `$${(Math.round(n * 100) / 100).toFixed(2)}`;
+/* Money formatter — backed by Intl.NumberFormat for proper grouping,
+   correct symbol placement (€1.234,56 vs $1,234.56) and zero-decimal
+   currencies like JPY/KRW. The default `fmt` falls back to USD; once the
+   <CurrencyProvider> is mounted, components should use `useFmt()` which
+   reads the currently selected currency from context. */
+function makeFormatter(currencyCode = "USD") {
+  const cur = CURRENCIES[currencyCode] || CURRENCIES.USD;
+  let nf;
+  try {
+    nf = new Intl.NumberFormat(cur.locale, {
+      style: "currency",
+      currency: cur.code,
+      minimumFractionDigits: cur.decimals,
+      maximumFractionDigits: cur.decimals
+    });
+  } catch {
+    nf = null;
+  }
+  return (n) => {
+    const safe = Number.isFinite(n) ? n : 0;
+    if (nf) return nf.format(safe);
+    const fixed = safe.toFixed(cur.decimals);
+    return `${cur.symbol}${fixed}`;
+  };
+}
+const fmt = makeFormatter("USD"); // default; replaced via CurrencyContext
+const CurrencyContext = React.createContext({
+  currency: "USD",
+  region: "US",
+  fmt: fmt,
+  setCurrency: () => {},
+  setRegion: () => {}
+});
+const useFmt = () => React.useContext(CurrencyContext).fmt;
+const useCurrency = () => React.useContext(CurrencyContext);
+
 const initialsOf = (name) =>
   (name || "?")
     .trim()
@@ -524,6 +621,7 @@ function Feature({ icon, label }) {
    remove lines, and rename the restaurant before moving on.
    ========================================================================= */
 function ReviewItemsScreen({ initial, source, onBack, onNext }) {
+  const fmt = useFmt();
   const [restaurant, setRestaurant] = useState(initial?.restaurant || "Receipt");
   const [items, setItems] = useState(
     (initial?.items && initial.items.length > 0)
@@ -767,6 +865,7 @@ function PeopleScreen({ people, setPeople, onBack, onNext }) {
    Screen 3 — Receipt Items: assign to one or more people
    ========================================================================= */
 function ItemsScreen({ items, setItems, people, assignments, setAssignments, restaurant, onBack, onNext }) {
+  const fmt = useFmt();
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("");
@@ -937,6 +1036,7 @@ function ItemsScreen({ items, setItems, people, assignments, setAssignments, res
    Screen 4 — Tip selector + Tax
    ========================================================================= */
 function TipScreen({ tipPct, setTipPct, taxRate, setTaxRate, subtotalPreview, onBack, onNext }) {
+  const fmt = useFmt();
   const presets = [0.10, 0.15, 0.20];
   const isCustom = !presets.includes(tipPct);
   const [customInput, setCustomInput] = useState(
@@ -1054,6 +1154,7 @@ function Row({ label, value, bold }) {
    Screen 5 — Summary: what each person owes
    ========================================================================= */
 function SummaryScreen({ totals, people, restaurant, onBack, onSend }) {
+  const fmt = useFmt();
   const [expanded, setExpanded] = useState(null);
 
   return (
@@ -1134,16 +1235,22 @@ function SummaryScreen({ totals, people, restaurant, onBack, onSend }) {
    Screen 6 — Send: per-person payment message + Venmo/Cash/PayPal links
    ========================================================================= */
 function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
-  const [yourHandle, setYourHandle] = useState("@you");
-  // Only PayPal is wired up — Venmo and Cash App are temporarily disabled.
-  const [provider, setProvider] = useState("paypal");
-  const [copied, setCopied] = useState(null);
-
-  const providers = [
-    { id: "venmo",   label: "Venmo",    icon: "fa-v",          color: "#3D95CE", disabled: true,  note: "Coming soon" },
+  const fmt = useFmt();
+  const { region } = useCurrency();
+  const regionInfo = REGIONS[region] || REGIONS.US;
+  // Region-aware provider list. Venmo + Cash App are US-only and currently
+  // disabled across all regions ("Coming soon"); PayPal is enabled
+  // everywhere we ship.
+  const allProviders = [
+    { id: "venmo",   label: "Venmo",    icon: "fa-v",           color: "#3D95CE", disabled: true,  note: "Coming soon" },
     { id: "cashapp", label: "Cash App", icon: "fa-dollar-sign", color: "#00D632", disabled: true,  note: "Coming soon" },
-    { id: "paypal",  label: "PayPal",   icon: "fa-paypal",     color: "#003087", disabled: false }
+    { id: "paypal",  label: "PayPal",   icon: "fa-paypal",      color: "#003087", disabled: false }
   ];
+  const providers = allProviders.filter((p) => regionInfo.providers.includes(p.id));
+
+  const [yourHandle, setYourHandle] = useState("@you");
+  const [provider, setProvider] = useState(() => providers.find((p) => !p.disabled)?.id || providers[0]?.id || "paypal");
+  const [copied, setCopied] = useState(null);
 
   const messageFor = (b) =>
     `Hey ${b.person.name}! 👋\n` +
@@ -1223,7 +1330,7 @@ function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
             className="mt-1 w-full bg-slate-100 rounded-xl px-4 py-3 text-base font-semibold outline-none focus:ring-2 focus:ring-brand-500/40"
           />
 
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className={`mt-3 grid gap-2 ${providers.length >= 3 ? "grid-cols-3" : providers.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
             {providers.map((p) => {
               const isOn = provider === p.id;
               const handleClick = () => {
@@ -1430,6 +1537,11 @@ function SignInScreen({ onSignedIn }) {
    Screen 0b — Paywall (7-day free trial → monthly / yearly)
    ========================================================================= */
 function PaywallScreen({ user, onSubscribed, onSignOut }) {
+  const { currency, region } = useCurrency();
+  const cur = CURRENCIES[currency] || CURRENCIES.USD;
+  const localPrice = (planId) => (planId === "yearly" ? cur.yearly : cur.monthly);
+  const fmt = useMemo(() => makeFormatter(currency), [currency]);
+
   const [selected, setSelected] = useState("yearly"); // default to best value
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -1467,7 +1579,8 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
   };
 
   const plan = PLANS[selected];
-  const firstCharge = new Date(Date.now() + TRIAL_MS).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const firstCharge = new Date(Date.now() + TRIAL_MS).toLocaleDateString(cur.locale, { month: "short", day: "numeric" });
+  const price = localPrice(selected);
 
   return (
     <div className="app-shell flex flex-col">
@@ -1497,12 +1610,16 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
       <div className="px-5 mt-6 space-y-3">
         <PlanRow
           plan={PLANS.yearly}
+          price={cur.yearly}
+          fmt={fmt}
           selected={selected === "yearly"}
           onSelect={() => setSelected("yearly")}
           highlight="Best value"
         />
         <PlanRow
           plan={PLANS.monthly}
+          price={cur.monthly}
+          fmt={fmt}
           selected={selected === "monthly"}
           onSelect={() => setSelected("monthly")}
         />
@@ -1529,16 +1646,16 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
           )}
         </button>
         <p className="text-[11px] text-slate-500 text-center mt-2 leading-relaxed px-2">
-          Free for 7 days, then <b>${plan.price.toFixed(2)}/{plan.per}</b> starting <b>{firstCharge}</b>.<br/>
-          Cancel anytime in Settings · Auto-renews until canceled.
+          Free for 7 days, then <b>{fmt(price)}/{plan.per}</b> starting <b>{firstCharge}</b>.<br/>
+          Region: <b>{REGIONS[region]?.flag} {REGIONS[region]?.name}</b> · Cancel anytime · Auto-renews until canceled.
         </p>
       </div>
     </div>
   );
 }
 
-function PlanRow({ plan, selected, onSelect, highlight }) {
-  const monthlyEquiv = plan.id === "yearly" ? (plan.price / 12) : null;
+function PlanRow({ plan, price, fmt, selected, onSelect, highlight }) {
+  const monthlyEquiv = plan.id === "yearly" ? (price / 12) : null;
   return (
     <button onClick={onSelect} className={`plan-card text-left w-full ${selected ? "is-on" : ""}`}>
       <div className="flex items-center gap-3">
@@ -1552,12 +1669,12 @@ function PlanRow({ plan, selected, onSelect, highlight }) {
             {highlight && plan.savePct && <span className="badge badge-trial">{highlight}</span>}
           </div>
           <div className="text-xs text-slate-500 mt-0.5">
-            7-day free trial, then ${plan.price.toFixed(2)}/{plan.per}
-            {monthlyEquiv && <> · just ${monthlyEquiv.toFixed(2)}/mo</>}
+            7-day free trial, then {fmt(price)}/{plan.per}
+            {monthlyEquiv && <> · just {fmt(monthlyEquiv)}/mo</>}
           </div>
         </div>
         <div className="text-right">
-          <div className="text-lg font-extrabold">${plan.price.toFixed(2)}</div>
+          <div className="text-lg font-extrabold">{fmt(price)}</div>
           <div className="text-[10px] text-slate-400 uppercase tracking-wider">/{plan.per}</div>
         </div>
       </div>
@@ -1580,13 +1697,21 @@ function BenefitRow({ icon, text, last }) {
    Account screen — manage subscription
    ========================================================================= */
 function AccountScreen({ user, subscription, onClose, onSignOut, onCancel }) {
+  const { currency, region, setCurrency, setRegion } = useCurrency();
+  const cur = CURRENCIES[currency] || CURRENCIES.USD;
+  const regionInfo = REGIONS[region] || REGIONS.US;
+  const fmt = useFmt();
   const plan = subscription && PLANS[subscription.plan];
+  const subPrice = plan ? (plan.id === "yearly" ? cur.yearly : cur.monthly) : 0;
   const daysLeft = subscription
     ? Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / (24 * 60 * 60 * 1000)))
     : 0;
   const endsLabel = subscription
-    ? new Date(subscription.renewsAt).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
+    ? new Date(subscription.renewsAt).toLocaleDateString(cur.locale, { month: "long", day: "numeric", year: "numeric" })
     : "";
+
+  const [showRegion, setShowRegion] = useState(false);
+  const [showCurrency, setShowCurrency] = useState(false);
 
   return (
     <div className="app-shell flex flex-col">
@@ -1618,7 +1743,7 @@ function AccountScreen({ user, subscription, onClose, onSignOut, onCancel }) {
               </div>
               <div className="mt-3 font-bold text-ink-900">{plan?.label} plan</div>
               <div className="text-sm text-slate-500 mt-0.5">
-                First charge of <b className="text-ink-900">${plan?.price.toFixed(2)}</b> on <b className="text-ink-900">{endsLabel}</b>
+                First charge of <b className="text-ink-900">{fmt(subPrice)}</b> on <b className="text-ink-900">{endsLabel}</b>
               </div>
             </>
           )}
@@ -1629,7 +1754,7 @@ function AccountScreen({ user, subscription, onClose, onSignOut, onCancel }) {
                 <span className="text-xs font-semibold text-slate-500">Renews {endsLabel}</span>
               </div>
               <div className="mt-3 font-bold text-ink-900">{plan?.label} plan</div>
-              <div className="text-sm text-slate-500 mt-0.5">${plan?.price.toFixed(2)} / {plan?.per}</div>
+              <div className="text-sm text-slate-500 mt-0.5">{fmt(subPrice)} / {plan?.per}</div>
             </>
           )}
           {subscription?.status === "canceled" && (
@@ -1651,6 +1776,83 @@ function AccountScreen({ user, subscription, onClose, onSignOut, onCancel }) {
             On iOS, manage your subscription in Settings → Apple ID → Subscriptions.
           </p>
         </div>
+      </div>
+
+      <div className="px-5 mt-4">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-2">Region &amp; currency</h2>
+        <div className="card overflow-hidden">
+          <button
+            onClick={() => { setShowRegion((v) => !v); setShowCurrency(false); }}
+            className="flex items-center gap-3 p-4 w-full text-left border-b border-slate-100 active:bg-slate-50"
+          >
+            <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-lg">
+              {regionInfo.flag}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Region</div>
+              <div className="text-sm font-bold text-ink-900 truncate">{regionInfo.name}</div>
+            </div>
+            <i className={`fa-solid fa-chevron-${showRegion ? "up" : "down"} text-slate-400 text-xs`}></i>
+          </button>
+          {showRegion && (
+            <div className="bg-slate-50 max-h-72 overflow-y-auto">
+              {Object.values(REGIONS).map((r) => (
+                <button
+                  key={r.code}
+                  onClick={() => {
+                    setRegion(r.code);
+                    setCurrency(r.currency); // auto-switch currency to region default
+                    setShowRegion(false);
+                  }}
+                  className={`flex items-center gap-3 px-4 py-3 w-full text-left border-b border-slate-100 last:border-b-0 active:bg-slate-100 ${region === r.code ? "bg-brand-50" : ""}`}
+                >
+                  <span className="text-lg">{r.flag}</span>
+                  <span className="flex-1 text-sm font-semibold text-ink-900">{r.name}</span>
+                  <span className="text-[11px] text-slate-400">{r.currency}</span>
+                  {region === r.code && <i className="fa-solid fa-check text-brand-600 text-xs"></i>}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <button
+            onClick={() => { setShowCurrency((v) => !v); setShowRegion(false); }}
+            className="flex items-center gap-3 p-4 w-full text-left active:bg-slate-50"
+          >
+            <span className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-sm">
+              {cur.symbol}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Currency</div>
+              <div className="text-sm font-bold text-ink-900 truncate">{cur.name} <span className="text-slate-400 font-normal">· {cur.code}</span></div>
+            </div>
+            <div className="text-xs text-slate-500 tabular-nums">{fmt(0)}</div>
+            <i className={`fa-solid fa-chevron-${showCurrency ? "up" : "down"} text-slate-400 text-xs ml-2`}></i>
+          </button>
+          {showCurrency && (
+            <div className="bg-slate-50 max-h-72 overflow-y-auto">
+              {Object.values(CURRENCIES).map((c) => (
+                <button
+                  key={c.code}
+                  onClick={() => { setCurrency(c.code); setShowCurrency(false); }}
+                  className={`flex items-center gap-3 px-4 py-3 w-full text-left border-b border-slate-100 last:border-b-0 active:bg-slate-100 ${currency === c.code ? "bg-brand-50" : ""}`}
+                >
+                  <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center font-bold text-sm text-slate-700">
+                    {c.symbol}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-ink-900 truncate">{c.name}</div>
+                    <div className="text-[11px] text-slate-400 truncate">{c.code} · {c.locale}</div>
+                  </div>
+                  {currency === c.code && <i className="fa-solid fa-check text-brand-600 text-xs"></i>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <p className="text-[11px] text-slate-400 mt-2 px-1 leading-relaxed">
+          Region sets your default tax, tip, and which payment apps appear on the Send screen. On iOS, App Store local pricing always overrides the display price here.
+        </p>
       </div>
 
       <div className="px-5 mt-4">
@@ -1690,14 +1892,28 @@ function LinkRow({ icon, label, last }) {
    Root app
    ========================================================================= */
 function App() {
-  /* ---- Auth + subscription (persisted) ---- */
+  /* ---- Auth + subscription + locale (persisted) ---- */
   const initial = loadState() || {};
   const [user, setUser] = useState(initial.user || null);
   const [subscription, setSubscription] = useState(initial.subscription || null);
   const [showAccount, setShowAccount] = useState(false);
+  // Region + currency: persisted if present, otherwise auto-detect from browser
+  const initialRegion = initial.region && REGIONS[initial.region] ? initial.region : detectRegion();
+  const [region, setRegion] = useState(initialRegion);
+  const [currency, setCurrency] = useState(
+    initial.currency && CURRENCIES[initial.currency]
+      ? initial.currency
+      : (REGIONS[initialRegion]?.currency || "USD")
+  );
 
-  // Persist whenever user/subscription changes
-  useEffect(() => { saveState({ user, subscription }); }, [user, subscription]);
+  // Persist whenever user/subscription/locale changes
+  useEffect(() => { saveState({ user, subscription, region, currency }); }, [user, subscription, region, currency]);
+
+  // Build the currency context value (memoized so child components don't re-render unnecessarily)
+  const currencyCtx = useMemo(() => ({
+    region, currency, setRegion, setCurrency,
+    fmt: makeFormatter(currency)
+  }), [region, currency]);
 
   // Auto-promote a finished trial into "active" so the demo behaves correctly
   // (in production, StoreKit / your backend is the source of truth)
@@ -1736,6 +1952,21 @@ function App() {
     () => computeTotals({ items, assignments, people, taxRate, tipPct }),
     [items, assignments, people, taxRate, tipPct]
   );
+
+  /* When the user changes their region, snap the active split's tip /
+     tax defaults to the new region's conventions. Users can still
+     adjust on the Tip & Tax screen — we just give them sensible
+     starting values for the new locale. */
+  const lastAppliedRegion = useRef(region);
+  useEffect(() => {
+    if (lastAppliedRegion.current === region) return;
+    const r = REGIONS[region];
+    if (r) {
+      setTipPct(r.defaultTip);
+      setTaxRate(r.defaultTax);
+    }
+    lastAppliedRegion.current = region;
+  }, [region]);
 
   /* Keep assignments in sync if people are removed */
   useEffect(() => {
@@ -1815,45 +2046,29 @@ function App() {
     showToast("Subscription canceled");
   };
 
-  /* ---- Gate: sign-in → paywall → app ---- */
-  if (!user) {
-    return (
-      <>
-        <SignInScreen onSignedIn={handleSignedIn} />
-        <Toast message={toast} onDone={() => setToast("")} />
-      </>
-    );
-  }
-  if (!hasAccess) {
-    return (
-      <>
-        <PaywallScreen
-          user={user}
-          onSubscribed={handleSubscribed}
-          onSignOut={handleSignOut}
-        />
-        <Toast message={toast} onDone={() => setToast("")} />
-      </>
-    );
-  }
-  if (showAccount) {
-    return (
-      <>
-        <AccountScreen
-          user={user}
-          subscription={subscription}
-          onClose={() => setShowAccount(false)}
-          onSignOut={handleSignOut}
-          onCancel={handleCancel}
-        />
-        <Toast message={toast} onDone={() => setToast("")} />
-      </>
-    );
-  }
-
-  /* ---- Main flow ---- */
+  /* ---- Gate: sign-in → paywall → account → main flow ---- */
   let body = null;
-  if (screen === "scan") {
+  if (!user) {
+    body = <SignInScreen onSignedIn={handleSignedIn} />;
+  } else if (!hasAccess) {
+    body = (
+      <PaywallScreen
+        user={user}
+        onSubscribed={handleSubscribed}
+        onSignOut={handleSignOut}
+      />
+    );
+  } else if (showAccount) {
+    body = (
+      <AccountScreen
+        user={user}
+        subscription={subscription}
+        onClose={() => setShowAccount(false)}
+        onSignOut={handleSignOut}
+        onCancel={handleCancel}
+      />
+    );
+  } else if (screen === "scan") {
     body = (
       <ScanScreen
         onScanned={handleScanned}
@@ -1930,10 +2145,10 @@ function App() {
   }
 
   return (
-    <>
+    <CurrencyContext.Provider value={currencyCtx}>
       {body}
       <Toast message={toast} onDone={() => setToast("")} />
-    </>
+    </CurrencyContext.Provider>
   );
 }
 
