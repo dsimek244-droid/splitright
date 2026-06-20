@@ -26,6 +26,10 @@
 | 13 | **Sample receipt** — "The Iron Skillet" with 10 items so you can test every screen instantly | ✅ |
 | 14 | **PWA manifest + iOS meta tags** — installable to home screen, App-Store-wrapper-ready | ✅ |
 | 15 | **🆕 Region & multi-currency** — 17 regions (US, UK, Ireland, Germany, France, Spain, Italy, Netherlands, Switzerland, Canada, Australia, Japan, South Korea, China, India, Brazil, Mexico) and 12 currencies (USD, EUR, GBP, JPY, CAD, AUD, INR, CNY, KRW, BRL, MXN, CHF). Auto-detected from the browser's locale on first launch, picked manually from the Account screen, persisted in `localStorage`. Changes the symbol, decimal places, locale-correct number formatting (€1.234,56 vs $1,234.56), default tip + VAT/tax rates per country, and which payment apps appear on the Send screen. | ✅ |
+| 16 | **🆕 Smarter region detection** — In addition to `navigator.language`, also reads the browser's **IANA timezone** (`Intl.DateTimeFormat().resolvedOptions().timeZone`) so that English-language phones used outside the US still get the right region & currency on first launch. Order of priority: timezone → browser locale country → language → US fallback. | ✅ |
+| 17 | **🆕 Per-person phone & email** — On the People screen, each person card has a discrete "address card" button that expands an inline form for **phone** + **email** (optional). Saved into the same person object; the existing color picker / delete / "Continue" UI is unchanged. A small green **`✓ contact`** badge appears next to the name once any contact field is filled. | ✅ |
+| 18 | **🆕 SMS & Email send (recipient doesn't need the app)** — On the Send screen, each person's card now shows two prominent buttons: **Text [Name]** (opens the user's native SMS app with the recipient's phone + the full breakdown pre-filled via `sms:` deep link) and **Email [Name]** (opens the mail client with subject + body pre-filled via `mailto:`). If the friend has no phone/email saved, the button greys out with a "No phone"/"No email" label and tapping it shows a toast pointing back to the People step. The recipient just gets a normal text message or email — they don't need to install anything. The existing PayPal button continues to work in parallel. | ✅ |
+| 19 | **🐛 Fixed: app failing to render** — Pinned `@babel/standalone` to `7.25.6` (was previously loading whatever was newest from unpkg). The unpinned latest 8.x betas were emitting ESM `import` helpers in the transformed output, which then crashed the classic `<script type="text/babel">` loader with `Cannot use import statement outside a module` and the app never rendered. Also switched the script's `data-presets` from `"env,react"` to just `"react"`, removing the unnecessary ES5 transpile step that triggered the issue. | ✅ |
 
 ### Flow on first launch
 ```
@@ -59,7 +63,7 @@ cd /home/user/webapp && npx wrangler pages secret put OPENAI_API_KEY --project-n
 
 ## Data Architecture
 - **Data Models**:
-  - `Person { id, name, color }`
+  - `Person { id, name, color, phone?, email? }` (phone/email are optional, used for one-tap SMS / mailto deep links on the Send screen — the recipient never has to download the app)
   - `Item   { id, name, price }`
   - `Assignments { [itemId]: [personId, ...] }`
   - `Receipt { restaurant, items, taxRate }` (from the scan)

@@ -144,12 +144,19 @@ app.get('/', (c) => {
 
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Pinned to 7.25.x — latest 8.x betas can emit ESM imports that crash
+       a classic <script type="text/babel"> with "Cannot use import
+       statement outside a module" and prevent the app from rendering. -->
+  <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body class="bg-slate-50 text-ink-900 antialiased">
   <div id="root"></div>
-  <script type="text/babel" data-presets="env,react" src="/static/app.jsx"></script>
+  <!-- IMPORTANT: only use the "react" preset here. Adding "env" makes Babel
+       try to emit ES-module imports for runtime helpers, which then fails
+       in a classic <script type="text/babel"> with "Cannot use import
+       statement outside a module" and the app never renders. -->
+  <script type="text/babel" data-presets="react" src="/static/app.jsx"></script>
 </body>
 </html>`)
 })

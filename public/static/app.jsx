@@ -84,15 +84,44 @@ const REGIONS = {
   MX: { code: "MX", flag: "🇲🇽", name: "Mexico",          currency: "MXN", defaultTip: 0.10, defaultTax: 0.16,   providers: ["paypal"] }
 };
 
-/* Detect a sensible default region from the browser locale. Falls back
-   to US so the existing flow stays identical for first-time US users. */
+/* Detect a sensible default region. Tries the IANA timezone first
+   (most reliable signal of where the phone actually is — survives
+   English-language phones being used abroad), then the browser locale,
+   then language. Falls back to US so the flow stays identical for
+   first-time US users. */
 function detectRegion() {
   try {
+    // 1) Timezone → country. Covers travelers + English-set phones abroad.
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    const tzMap = {
+      "America/New_York": "US", "America/Chicago": "US", "America/Denver": "US",
+      "America/Los_Angeles": "US", "America/Phoenix": "US", "America/Anchorage": "US",
+      "Pacific/Honolulu": "US", "America/Detroit": "US", "America/Indianapolis": "US",
+      "America/Toronto": "CA", "America/Vancouver": "CA", "America/Montreal": "CA",
+      "America/Edmonton": "CA", "America/Halifax": "CA",
+      "America/Mexico_City": "MX", "America/Tijuana": "MX",
+      "America/Sao_Paulo": "BR", "America/Buenos_Aires": "BR",
+      "Europe/London": "GB", "Europe/Dublin": "GB",
+      "Europe/Paris": "FR", "Europe/Berlin": "DE", "Europe/Madrid": "ES",
+      "Europe/Rome": "IT", "Europe/Amsterdam": "NL", "Europe/Brussels": "NL",
+      "Europe/Zurich": "CH", "Europe/Vienna": "DE", "Europe/Lisbon": "BR",
+      "Europe/Stockholm": "DE", "Europe/Helsinki": "DE", "Europe/Oslo": "DE",
+      "Europe/Copenhagen": "DE", "Europe/Warsaw": "DE", "Europe/Prague": "DE",
+      "Asia/Tokyo": "JP", "Asia/Seoul": "KR",
+      "Asia/Shanghai": "CN", "Asia/Hong_Kong": "CN", "Asia/Taipei": "CN",
+      "Asia/Kolkata": "IN", "Asia/Calcutta": "IN", "Asia/Mumbai": "IN",
+      "Australia/Sydney": "AU", "Australia/Melbourne": "AU", "Australia/Brisbane": "AU",
+      "Australia/Perth": "AU", "Pacific/Auckland": "AU"
+    };
+    if (tzMap[tz] && REGIONS[tzMap[tz]]) return tzMap[tz];
+
+    // 2) Browser locale (e.g. en-GB, de-CH) → country code.
     const locale = (navigator.languages && navigator.languages[0]) || navigator.language || "en-US";
     const parts = locale.split(/[-_]/);
     const cc = (parts[1] || "").toUpperCase();
     if (REGIONS[cc]) return cc;
-    // Common language → region fallback
+
+    // 3) Language → most likely region.
     const langMap = { en: "US", de: "DE", fr: "FR", es: "ES", it: "IT", nl: "NL", ja: "JP", ko: "KR", zh: "CN", pt: "BR", hi: "IN" };
     const lang = (parts[0] || "en").toLowerCase();
     return langMap[lang] || "US";
@@ -131,10 +160,10 @@ const PRESET_COLORS = [
 ];
 
 const STARTER_PEOPLE = [
-  { id: "p1", name: "Alex",   color: PRESET_COLORS[0] },
-  { id: "p2", name: "Jordan", color: PRESET_COLORS[1] },
-  { id: "p3", name: "Sam",    color: PRESET_COLORS[2] },
-  { id: "p4", name: "Taylor", color: PRESET_COLORS[3] }
+  { id: "p1", name: "Alex",   color: PRESET_COLORS[0], phone: "", email: "" },
+  { id: "p2", name: "Jordan", color: PRESET_COLORS[1], phone: "", email: "" },
+  { id: "p3", name: "Sam",    color: PRESET_COLORS[2], phone: "", email: "" },
+  { id: "p4", name: "Taylor", color: PRESET_COLORS[3], phone: "", email: "" }
 ];
 
 /* Pre-assign items so the Summary screen works immediately on first run */
@@ -739,12 +768,13 @@ function ReviewItemsScreen({ initial, source, onBack, onNext }) {
 function PeopleScreen({ people, setPeople, onBack, onNext }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(PRESET_COLORS[people.length % PRESET_COLORS.length]);
+  const [expanded, setExpanded] = useState(null); // id of person currently showing contact fields
   const inputRef = useRef(null);
 
   const addPerson = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setPeople([...people, { id: uid(), name: trimmed, color }]);
+    setPeople([...people, { id: uid(), name: trimmed, color, phone: "", email: "" }]);
     setName("");
     setColor(PRESET_COLORS[(people.length + 1) % PRESET_COLORS.length]);
     inputRef.current?.focus();
@@ -754,6 +784,9 @@ function PeopleScreen({ people, setPeople, onBack, onNext }) {
 
   const updateColor = (id, newColor) =>
     setPeople(people.map((p) => (p.id === id ? { ...p, color: newColor } : p)));
+
+  const updateContact = (id, field, value) =>
+    setPeople(people.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
 
   return (
     <div className="app-shell flex flex-col">
@@ -817,32 +850,89 @@ function PeopleScreen({ people, setPeople, onBack, onNext }) {
           </div>
         )}
 
-        {people.map((p) => (
-          <div key={p.id} className="card p-3 flex items-center gap-3">
-            <Avatar person={p} size="lg" />
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold text-ink-900 truncate">{p.name}</div>
-              <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                {PRESET_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => updateColor(p.id, c)}
-                    className={`w-5 h-5 rounded-full transition ${p.color === c ? "ring-2 ring-offset-1 ring-ink-900" : "opacity-60"}`}
-                    style={{ background: c }}
-                    aria-label={`Set color ${c}`}
-                  />
-                ))}
+        {people.map((p) => {
+          const isOpen = expanded === p.id;
+          const hasContact = !!(p.phone || p.email);
+          return (
+            <div key={p.id} className="card p-3">
+              <div className="flex items-center gap-3">
+                <Avatar person={p} size="lg" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="font-semibold text-ink-900 truncate">{p.name}</div>
+                    {hasContact && (
+                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
+                        <i className="fa-solid fa-check mr-0.5"></i>contact
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                    {PRESET_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => updateColor(p.id, c)}
+                        className={`w-5 h-5 rounded-full transition ${p.color === c ? "ring-2 ring-offset-1 ring-ink-900" : "opacity-60"}`}
+                        style={{ background: c }}
+                        aria-label={`Set color ${c}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setExpanded(isOpen ? null : p.id)}
+                  className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 active:scale-95"
+                  aria-label={isOpen ? "Hide contact" : "Add contact"}
+                  title="Phone / Email — for sending requests later"
+                >
+                  <i className={`fa-solid ${isOpen ? "fa-chevron-up" : "fa-address-card"}`}></i>
+                </button>
+                <button
+                  onClick={() => removePerson(p.id)}
+                  className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 active:scale-95"
+                  aria-label="Remove person"
+                >
+                  <i className="fa-solid fa-trash"></i>
+                </button>
               </div>
+
+              {isOpen && (
+                <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                    Contact (optional)
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <i className="fa-solid fa-phone text-slate-400 text-sm w-5 text-center"></i>
+                    <input
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      value={p.phone || ""}
+                      onChange={(e) => updateContact(p.id, "phone", e.target.value)}
+                      placeholder="Phone (e.g. +1 555 123 4567)"
+                      className="flex-1 bg-slate-100 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-brand-500/40"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <i className="fa-solid fa-envelope text-slate-400 text-sm w-5 text-center"></i>
+                    <input
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      value={p.email || ""}
+                      onChange={(e) => updateContact(p.id, "email", e.target.value)}
+                      placeholder="Email (e.g. alex@gmail.com)"
+                      className="flex-1 bg-slate-100 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-brand-500/40"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    <i className="fa-solid fa-circle-info mr-1"></i>
+                    Used to send a text or email with their share. They don't need the app.
+                  </p>
+                </div>
+              )}
             </div>
-            <button
-              onClick={() => removePerson(p.id)}
-              className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 active:scale-95"
-              aria-label="Remove person"
-            >
-              <i className="fa-solid fa-trash"></i>
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex-1"></div>
@@ -1270,6 +1360,25 @@ function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
     return "#"; // venmo / cashapp disabled
   };
 
+  /* Per-person SMS / Email deep links.
+     The recipient does NOT need the app installed — these open their
+     native SMS app or mail client, with the breakdown pre-filled. */
+  const smsLinkFor = (b) => {
+    if (!b.person.phone) return null;
+    const phone = b.person.phone.replace(/[^\d+]/g, "");
+    if (!phone) return null;
+    const body = encodeURIComponent(messageFor(b));
+    return `sms:${phone}?&body=${body}`;
+  };
+  const emailLinkFor = (b) => {
+    if (!b.person.email) return null;
+    const email = b.person.email.trim();
+    if (!email.includes("@")) return null;
+    const subject = encodeURIComponent(`Your share of ${restaurant}`);
+    const body = encodeURIComponent(messageFor(b));
+    return `mailto:${email}?subject=${subject}&body=${body}`;
+  };
+
   const currentProvider = providers.find((p) => p.id === provider);
   const providerDisabled = !!currentProvider?.disabled;
 
@@ -1318,7 +1427,7 @@ function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
 
   return (
     <div className="app-shell flex flex-col">
-      <Header title="Send requests" subtitle="Copy each message or share directly." onBack={onBack} />
+      <Header title="Send requests" subtitle="Text or email each person — they don't need the app." onBack={onBack} />
 
       <div className="px-5 mt-2">
         <div className="card p-4">
@@ -1382,51 +1491,93 @@ function SendScreen({ totals, restaurant, onBack, onDone, showToast }) {
       </div>
 
       <div className="px-5 space-y-2">
-        {totals.breakdown.map((b) => (
-          <div key={b.person.id} className="card p-4">
-            <div className="flex items-center gap-3">
-              <Avatar person={b.person} size="lg" />
-              <div className="flex-1 min-w-0">
-                <div className="font-bold">{b.person.name}</div>
-                <div className="text-xs text-slate-500">owes {fmt(b.total)}</div>
+        {totals.breakdown.map((b) => {
+          const smsLink = smsLinkFor(b);
+          const emailLink = emailLinkFor(b);
+          return (
+            <div key={b.person.id} className="card p-4">
+              <div className="flex items-center gap-3">
+                <Avatar person={b.person} size="lg" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold">{b.person.name}</div>
+                  <div className="text-xs text-slate-500">owes {fmt(b.total)}</div>
+                </div>
+                {providerDisabled ? (
+                  <button
+                    onClick={() => showToast(`${currentProvider.label} is coming soon`)}
+                    className="px-3 py-2 rounded-xl text-white text-xs font-bold active:scale-95 opacity-60 cursor-not-allowed"
+                    style={{ background: currentProvider.color }}
+                    title="Coming soon"
+                  >
+                    Soon <i className="fa-solid fa-lock ml-1 text-[10px]"></i>
+                  </button>
+                ) : (
+                  <a
+                    href={linkFor(b)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 rounded-xl text-white text-xs font-bold active:scale-95"
+                    style={{ background: currentProvider.color }}
+                  >
+                    PayPal <i className="fa-solid fa-arrow-up-right-from-square ml-1 text-[10px]"></i>
+                  </a>
+                )}
               </div>
-              {providerDisabled ? (
-                <button
-                  onClick={() => showToast(`${currentProvider.label} is coming soon`)}
-                  className="px-3 py-2 rounded-xl text-white text-xs font-bold active:scale-95 opacity-60 cursor-not-allowed"
-                  style={{ background: currentProvider.color }}
-                  title="Coming soon"
-                >
-                  Soon <i className="fa-solid fa-lock ml-1 text-[10px]"></i>
-                </button>
-              ) : (
-                <a
-                  href={linkFor(b)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-3 py-2 rounded-xl text-white text-xs font-bold active:scale-95"
-                  style={{ background: currentProvider.color }}
-                >
-                  Request <i className="fa-solid fa-arrow-up-right-from-square ml-1 text-[10px]"></i>
-                </a>
-              )}
-            </div>
 
-            <pre className="mt-3 bg-slate-50 rounded-xl p-3 text-[12px] leading-relaxed text-slate-700 whitespace-pre-wrap font-sans">
+              {/* Direct send to their phone / email — recipient doesn't need the app */}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {smsLink ? (
+                  <a
+                    href={smsLink}
+                    className="px-3 py-2.5 rounded-xl text-white text-xs font-bold text-center active:scale-95 flex items-center justify-center gap-1.5"
+                    style={{ background: "#34C759" }}
+                  >
+                    <i className="fa-solid fa-comment-sms"></i> Text {b.person.name}
+                  </a>
+                ) : (
+                  <button
+                    onClick={() => showToast(`Add ${b.person.name}'s phone on the People step`)}
+                    className="px-3 py-2.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-400 cursor-not-allowed flex items-center justify-center gap-1.5"
+                    title="No phone saved for this person"
+                  >
+                    <i className="fa-solid fa-comment-sms"></i> No phone
+                  </button>
+                )}
+                {emailLink ? (
+                  <a
+                    href={emailLink}
+                    className="px-3 py-2.5 rounded-xl text-white text-xs font-bold text-center active:scale-95 flex items-center justify-center gap-1.5"
+                    style={{ background: "#0A84FF" }}
+                  >
+                    <i className="fa-solid fa-envelope"></i> Email {b.person.name}
+                  </a>
+                ) : (
+                  <button
+                    onClick={() => showToast(`Add ${b.person.name}'s email on the People step`)}
+                    className="px-3 py-2.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-400 cursor-not-allowed flex items-center justify-center gap-1.5"
+                    title="No email saved for this person"
+                  >
+                    <i className="fa-solid fa-envelope"></i> No email
+                  </button>
+                )}
+              </div>
+
+              <pre className="mt-3 bg-slate-50 rounded-xl p-3 text-[12px] leading-relaxed text-slate-700 whitespace-pre-wrap font-sans">
 {messageFor(b)}
-            </pre>
+              </pre>
 
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <button onClick={() => copyMessage(b)} className="btn-secondary">
-                <i className={`fa-regular ${copied === b.person.id ? "fa-circle-check text-emerald-600" : "fa-copy"} mr-2`}></i>
-                {copied === b.person.id ? "Copied!" : "Copy message"}
-              </button>
-              <button onClick={() => shareNative(b)} className="btn-secondary">
-                <i className="fa-solid fa-share-nodes mr-2"></i> Share
-              </button>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={() => copyMessage(b)} className="btn-secondary">
+                  <i className={`fa-regular ${copied === b.person.id ? "fa-circle-check text-emerald-600" : "fa-copy"} mr-2`}></i>
+                  {copied === b.person.id ? "Copied!" : "Copy message"}
+                </button>
+                <button onClick={() => shareNative(b)} className="btn-secondary">
+                  <i className="fa-solid fa-share-nodes mr-2"></i> Share
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex-1"></div>
