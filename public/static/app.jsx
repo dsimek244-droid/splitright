@@ -159,11 +159,14 @@ const PRESET_COLORS = [
   "#F97316"  // orange
 ];
 
+/* Sample people for the "Try sample" demo flow. Includes sample contact
+   info so the validation on the People screen passes without typing.
+   (Real flow starts with 2 empty rows — see handleReviewNext.) */
 const STARTER_PEOPLE = [
-  { id: "p1", name: "Alex",   color: PRESET_COLORS[0], phone: "", email: "" },
-  { id: "p2", name: "Jordan", color: PRESET_COLORS[1], phone: "", email: "" },
-  { id: "p3", name: "Sam",    color: PRESET_COLORS[2], phone: "", email: "" },
-  { id: "p4", name: "Taylor", color: PRESET_COLORS[3], phone: "", email: "" }
+  { id: "p1", name: "Alex",   color: PRESET_COLORS[0], phone: "+1 555 0101",  email: "alex@example.com"   },
+  { id: "p2", name: "Jordan", color: PRESET_COLORS[1], phone: "+1 555 0102",  email: "jordan@example.com" },
+  { id: "p3", name: "Sam",    color: PRESET_COLORS[2], phone: "+1 555 0103",  email: "sam@example.com"    },
+  { id: "p4", name: "Taylor", color: PRESET_COLORS[3], phone: "+1 555 0104",  email: "taylor@example.com" }
 ];
 
 /* Pre-assign items so the Summary screen works immediately on first run */
@@ -765,186 +768,218 @@ function ReviewItemsScreen({ initial, source, onBack, onNext }) {
 /* =========================================================================
    Screen 2 — People at the table
    ========================================================================= */
+/* "How many people?" — big stepper at the top auto-generates N rows. Each
+   row asks for a Name + Phone OR Email. Continue is disabled until every
+   row is complete (a name AND at least one valid contact method). This is
+   the "1-tap" centerpiece: pick a number, type the names, done. */
 function PeopleScreen({ people, setPeople, onBack, onNext }) {
-  const [name, setName] = useState("");
-  const [color, setColor] = useState(PRESET_COLORS[people.length % PRESET_COLORS.length]);
-  const [expanded, setExpanded] = useState(null); // id of person currently showing contact fields
-  const inputRef = useRef(null);
+  // hasContact: requires at least 2 phone digits OR an email containing "@"
+  const isPhoneOk = (s) => !!s && (s.match(/\d/g) || []).length >= 2;
+  const isEmailOk = (s) => !!s && s.includes("@") && s.includes(".");
+  const hasContact = (p) => isPhoneOk(p.phone) || isEmailOk(p.email);
+  const isPersonComplete = (p) => !!p.name.trim() && hasContact(p);
 
-  const addPerson = () => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    setPeople([...people, { id: uid(), name: trimmed, color, phone: "", email: "" }]);
-    setName("");
-    setColor(PRESET_COLORS[(people.length + 1) % PRESET_COLORS.length]);
-    inputRef.current?.focus();
+  // Resize the list to N rows, keeping existing data when shrinking/growing.
+  const setCount = (n) => {
+    const target = Math.max(1, Math.min(20, n));
+    if (target === people.length) return;
+    if (target < people.length) {
+      setPeople(people.slice(0, target));
+    } else {
+      const add = [];
+      for (let i = people.length; i < target; i++) {
+        add.push({
+          id: uid(),
+          name: "",
+          color: PRESET_COLORS[i % PRESET_COLORS.length],
+          phone: "",
+          email: ""
+        });
+      }
+      setPeople([...people, ...add]);
+    }
   };
 
-  const removePerson = (id) => setPeople(people.filter((p) => p.id !== id));
+  const updateField = (id, field, value) =>
+    setPeople(people.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
 
   const updateColor = (id, newColor) =>
     setPeople(people.map((p) => (p.id === id ? { ...p, color: newColor } : p)));
 
-  const updateContact = (id, field, value) =>
-    setPeople(people.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+  const allComplete = people.length >= 2 && people.every(isPersonComplete);
+  const completeCount = people.filter(isPersonComplete).length;
 
   return (
     <div className="app-shell flex flex-col">
       <Header
         title="Who's at the table?"
-        subtitle="Add everyone splitting the bill."
+        subtitle="Pick a number, add their names + phone or email."
         onBack={onBack}
       />
       <Stepper step={0} />
 
+      {/* Big number stepper — "How many people?" */}
       <div className="px-5 mt-2">
-        <div className="card p-4">
-          <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Add person</label>
-          <div className="mt-2 flex items-center gap-2">
-            <span className="avatar lg" style={{ background: color }}>
-              {initialsOf(name || "?")}
-            </span>
-            <input
-              ref={inputRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addPerson()}
-              placeholder="e.g. Riley"
-              className="flex-1 bg-slate-100 rounded-xl px-4 py-3 text-base font-medium outline-none focus:ring-2 focus:ring-brand-500/40"
-            />
+        <div className="card p-5">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide text-center">
+            How many people?
+          </div>
+          <div className="mt-3 flex items-center justify-center gap-4">
             <button
-              onClick={addPerson}
-              className="w-12 h-12 rounded-xl bg-brand-600 text-white font-bold shadow-pop active:scale-95"
-              aria-label="Add person"
+              onClick={() => setCount(people.length - 1)}
+              disabled={people.length <= 1}
+              className="w-14 h-14 rounded-2xl bg-slate-100 text-2xl font-bold text-ink-900 active:scale-95 disabled:opacity-40"
+              aria-label="One less person"
+            >
+              <i className="fa-solid fa-minus"></i>
+            </button>
+            <div className="w-20 text-center">
+              <div className="text-5xl font-black text-ink-900 leading-none">{people.length}</div>
+              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mt-1">
+                {people.length === 1 ? "person" : "people"}
+              </div>
+            </div>
+            <button
+              onClick={() => setCount(people.length + 1)}
+              disabled={people.length >= 20}
+              className="w-14 h-14 rounded-2xl bg-brand-600 text-white text-2xl font-bold active:scale-95 disabled:opacity-40 shadow-pop"
+              aria-label="One more person"
             >
               <i className="fa-solid fa-plus"></i>
             </button>
           </div>
-
-          <div className="mt-3 flex items-center gap-2 flex-wrap">
-            {PRESET_COLORS.map((c) => (
+          {/* quick-pick chips for common group sizes */}
+          <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+            {[2, 3, 4, 5, 6, 8].map((n) => (
               <button
-                key={c}
-                onClick={() => setColor(c)}
-                className={`w-8 h-8 rounded-full transition-transform ${color === c ? "ring-2 ring-offset-2 ring-ink-900 scale-110" : ""}`}
-                style={{ background: c }}
-                aria-label={`Pick color ${c}`}
-              />
+                key={n}
+                onClick={() => setCount(n)}
+                className={`px-3 py-1.5 rounded-full text-sm font-bold transition ${
+                  people.length === n
+                    ? "bg-brand-600 text-white"
+                    : "bg-slate-100 text-slate-600 active:scale-95"
+                }`}
+              >
+                {n}
+              </button>
             ))}
           </div>
         </div>
       </div>
 
+      {/* Progress indicator: X of N completed */}
       <div className="px-5 mt-4 mb-2 flex items-baseline justify-between">
         <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
-          At the table · {people.length}
+          Their info
         </h2>
+        <span className={`text-xs font-bold ${allComplete ? "text-emerald-600" : "text-slate-400"}`}>
+          {completeCount} / {people.length} done
+        </span>
       </div>
 
       <div className="px-5 space-y-2">
-        {people.length === 0 && (
-          <div className="card p-6 text-center text-slate-500">
-            <i className="fa-solid fa-users text-2xl mb-2"></i>
-            <div className="font-semibold">No one added yet</div>
-            <div className="text-sm">Add at least 2 people to split the bill.</div>
-          </div>
-        )}
-
-        {people.map((p) => {
-          const isOpen = expanded === p.id;
-          const hasContact = !!(p.phone || p.email);
+        {people.map((p, idx) => {
+          const phoneOk = isPhoneOk(p.phone);
+          const emailOk = isEmailOk(p.email);
+          const personOk = isPersonComplete(p);
           return (
-            <div key={p.id} className="card p-3">
+            <div
+              key={p.id}
+              className={`card p-3 transition ${personOk ? "" : "ring-1 ring-slate-100"}`}
+            >
               <div className="flex items-center gap-3">
-                <Avatar person={p} size="lg" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <div className="font-semibold text-ink-900 truncate">{p.name}</div>
-                    {hasContact && (
-                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
-                        <i className="fa-solid fa-check mr-0.5"></i>contact
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                    {PRESET_COLORS.map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => updateColor(p.id, c)}
-                        className={`w-5 h-5 rounded-full transition ${p.color === c ? "ring-2 ring-offset-1 ring-ink-900" : "opacity-60"}`}
-                        style={{ background: c }}
-                        aria-label={`Set color ${c}`}
-                      />
-                    ))}
-                  </div>
-                </div>
-                <button
-                  onClick={() => setExpanded(isOpen ? null : p.id)}
-                  className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 active:scale-95"
-                  aria-label={isOpen ? "Hide contact" : "Add contact"}
-                  title="Phone / Email — for sending requests later"
-                >
-                  <i className={`fa-solid ${isOpen ? "fa-chevron-up" : "fa-address-card"}`}></i>
-                </button>
-                <button
-                  onClick={() => removePerson(p.id)}
-                  className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 active:scale-95"
-                  aria-label="Remove person"
-                >
-                  <i className="fa-solid fa-trash"></i>
-                </button>
+                <Avatar person={{ ...p, name: p.name || `?${idx + 1}` }} size="lg" />
+                <input
+                  value={p.name}
+                  onChange={(e) => updateField(p.id, "name", e.target.value)}
+                  placeholder={`Person ${idx + 1} name`}
+                  autoCapitalize="words"
+                  autoComplete="off"
+                  className="flex-1 min-w-0 bg-slate-100 rounded-xl px-3 py-2.5 text-base font-semibold outline-none focus:ring-2 focus:ring-brand-500/40"
+                />
+                {personOk && (
+                  <span
+                    className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center"
+                    aria-label="Complete"
+                  >
+                    <i className="fa-solid fa-check"></i>
+                  </span>
+                )}
               </div>
 
-              {isOpen && (
-                <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
-                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                    Contact (optional)
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <i className="fa-solid fa-phone text-slate-400 text-sm w-5 text-center"></i>
-                    <input
-                      type="tel"
-                      inputMode="tel"
-                      autoComplete="tel"
-                      value={p.phone || ""}
-                      onChange={(e) => updateContact(p.id, "phone", e.target.value)}
-                      placeholder="Phone (e.g. +1 555 123 4567)"
-                      className="flex-1 bg-slate-100 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-brand-500/40"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <i className="fa-solid fa-envelope text-slate-400 text-sm w-5 text-center"></i>
-                    <input
-                      type="email"
-                      inputMode="email"
-                      autoComplete="email"
-                      value={p.email || ""}
-                      onChange={(e) => updateContact(p.id, "email", e.target.value)}
-                      placeholder="Email (e.g. alex@gmail.com)"
-                      className="flex-1 bg-slate-100 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-brand-500/40"
-                    />
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    <i className="fa-solid fa-circle-info mr-1"></i>
-                    Used to send a text or email with their share. They don't need the app.
-                  </p>
+              {/* Color tag picker (small) */}
+              <div className="mt-2 flex items-center gap-1.5 flex-wrap pl-[52px]">
+                {PRESET_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => updateColor(p.id, c)}
+                    className={`w-4 h-4 rounded-full transition ${p.color === c ? "ring-2 ring-offset-1 ring-ink-900" : "opacity-50"}`}
+                    style={{ background: c }}
+                    aria-label={`Set color ${c}`}
+                  />
+                ))}
+              </div>
+
+              {/* Phone + Email — at least ONE required to continue */}
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <i className={`fa-solid fa-phone text-sm w-5 text-center ${phoneOk ? "text-emerald-500" : "text-slate-400"}`}></i>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={p.phone || ""}
+                    onChange={(e) => updateField(p.id, "phone", e.target.value)}
+                    placeholder="Phone (+1 555 123 4567)"
+                    className="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-brand-500/40"
+                  />
                 </div>
-              )}
+                <div className="text-center text-[10px] font-bold text-slate-400 tracking-wider">
+                  — OR —
+                </div>
+                <div className="flex items-center gap-2">
+                  <i className={`fa-solid fa-envelope text-sm w-5 text-center ${emailOk ? "text-emerald-500" : "text-slate-400"}`}></i>
+                  <input
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    value={p.email || ""}
+                    onChange={(e) => updateField(p.id, "email", e.target.value)}
+                    placeholder="Email (alex@gmail.com)"
+                    className="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-brand-500/40"
+                  />
+                </div>
+              </div>
             </div>
           );
         })}
       </div>
 
-      <div className="flex-1"></div>
+      <div className="px-5 mt-3">
+        <p className="text-[11px] text-slate-500 text-center">
+          <i className="fa-solid fa-circle-info mr-1"></i>
+          We use this to send each person their share by text or email. They don't need to download anything.
+        </p>
+      </div>
+
+      <div className="flex-1 min-h-[120px]"></div>
 
       <div className="action-bar">
         <button
           className="btn-primary"
           onClick={onNext}
-          disabled={people.length < 2}
+          disabled={!allComplete}
         >
-          Continue with {people.length} {people.length === 1 ? "person" : "people"}
-          <i className="fa-solid fa-arrow-right ml-2"></i>
+          {allComplete ? (
+            <>
+              Continue with {people.length} {people.length === 1 ? "person" : "people"}
+              <i className="fa-solid fa-arrow-right ml-2"></i>
+            </>
+          ) : (
+            <>
+              Add a name + phone or email for everyone
+            </>
+          )}
         </button>
       </div>
     </div>
@@ -1241,11 +1276,60 @@ function Row({ label, value, bold }) {
 }
 
 /* =========================================================================
-   Screen 5 — Summary: what each person owes
+   Screen 5 — Summary + Send (combined for 1-tap experience)
+   Each person's card has inline SMS / Email / PayPal buttons. The
+   recipient doesn't need the app — sms: / mailto: deep links open
+   their native messaging app with the breakdown pre-filled.
    ========================================================================= */
-function SummaryScreen({ totals, people, restaurant, onBack, onSend }) {
+function SummaryScreen({ totals, people, restaurant, onBack, onDone, showToast }) {
   const fmt = useFmt();
   const [expanded, setExpanded] = useState(null);
+  const [yourPaypal, setYourPaypal] = useState("");
+  const [copiedId, setCopiedId] = useState(null);
+
+  const messageFor = (b) => {
+    const lines = [
+      `Hey ${b.person.name}! 👋`,
+      `Your share of ${restaurant} is ${fmt(b.total)}.`,
+      `(Items ${fmt(b.subtotal)} + Tax ${fmt(b.tax)} + Tip ${fmt(b.tip)})`
+    ];
+    if (yourPaypal.trim()) {
+      lines.push(`Send to paypal.me/${yourPaypal.trim().replace(/^@/, "")}. Thanks!`);
+    } else {
+      lines.push(`Thanks!`);
+    }
+    lines.push(`— Split with SplitRight`);
+    return lines.join("\n");
+  };
+
+  const smsLinkFor = (b) => {
+    if (!b.person.phone) return null;
+    const phone = b.person.phone.replace(/[^\d+]/g, "");
+    if (!phone) return null;
+    return `sms:${phone}?&body=${encodeURIComponent(messageFor(b))}`;
+  };
+  const emailLinkFor = (b) => {
+    if (!b.person.email || !b.person.email.includes("@")) return null;
+    return `mailto:${b.person.email.trim()}?subject=${encodeURIComponent(
+      `Your share of ${restaurant}`
+    )}&body=${encodeURIComponent(messageFor(b))}`;
+  };
+  const paypalLinkFor = (b) => {
+    const handle = yourPaypal.trim().replace(/^@/, "");
+    if (!handle) return null;
+    return `https://paypal.me/${encodeURIComponent(handle)}/${b.total.toFixed(2)}`;
+  };
+
+  const copyMessage = async (b) => {
+    try {
+      await navigator.clipboard.writeText(messageFor(b));
+      setCopiedId(b.person.id);
+      showToast(`Copied ${b.person.name}'s message`);
+      setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      showToast("Couldn't copy");
+    }
+  };
 
   return (
     <div className="app-shell flex flex-col">
@@ -1267,14 +1351,32 @@ function SummaryScreen({ totals, people, restaurant, onBack, onSend }) {
         </div>
       </div>
 
+      {/* Optional PayPal handle for the user (so a paypal.me link can be built) */}
+      <div className="px-5 mt-3">
+        <div className="card p-3 flex items-center gap-2">
+          <i className="fa-brands fa-paypal text-[#003087] text-lg w-6 text-center"></i>
+          <input
+            value={yourPaypal}
+            onChange={(e) => setYourPaypal(e.target.value)}
+            placeholder="Your PayPal handle (optional)"
+            autoCapitalize="off"
+            autoCorrect="off"
+            className="flex-1 bg-slate-50 rounded-lg px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-brand-500/40"
+          />
+        </div>
+      </div>
+
       <div className="px-5 mt-4 mb-2 flex items-baseline justify-between">
         <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">Per person</h2>
-        <span className="text-xs text-slate-400">{people.length} people</span>
+        <span className="text-xs text-slate-400">{people.length} people · tap to send</span>
       </div>
 
       <div className="px-5 space-y-2">
         {totals.breakdown.map((b) => {
           const open = expanded === b.person.id;
+          const sms = smsLinkFor(b);
+          const email = emailLinkFor(b);
+          const paypal = paypalLinkFor(b);
           return (
             <div key={b.person.id} className="card overflow-hidden">
               <button
@@ -1295,7 +1397,62 @@ function SummaryScreen({ totals, people, restaurant, onBack, onSend }) {
                 <i className={`fa-solid fa-chevron-${open ? "up" : "down"} text-slate-400 ml-1`}></i>
               </button>
               {open && (
-                <div className="px-4 pb-4 -mt-1">
+                <div className="px-4 pb-4 -mt-1 space-y-3">
+                  {/* Send actions — one-tap, recipient doesn't need the app */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {sms ? (
+                      <a
+                        href={sms}
+                        className="px-2 py-2.5 rounded-xl text-white text-xs font-bold text-center active:scale-95 flex items-center justify-center gap-1.5"
+                        style={{ background: "#34C759" }}
+                      >
+                        <i className="fa-solid fa-comment-sms"></i> Text
+                      </a>
+                    ) : (
+                      <button
+                        disabled
+                        className="px-2 py-2.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-400 cursor-not-allowed flex items-center justify-center gap-1.5"
+                      >
+                        <i className="fa-solid fa-comment-sms"></i> No phone
+                      </button>
+                    )}
+                    {email ? (
+                      <a
+                        href={email}
+                        className="px-2 py-2.5 rounded-xl text-white text-xs font-bold text-center active:scale-95 flex items-center justify-center gap-1.5"
+                        style={{ background: "#0A84FF" }}
+                      >
+                        <i className="fa-solid fa-envelope"></i> Email
+                      </a>
+                    ) : (
+                      <button
+                        disabled
+                        className="px-2 py-2.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-400 cursor-not-allowed flex items-center justify-center gap-1.5"
+                      >
+                        <i className="fa-solid fa-envelope"></i> No email
+                      </button>
+                    )}
+                    {paypal ? (
+                      <a
+                        href={paypal}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2 py-2.5 rounded-xl text-white text-xs font-bold text-center active:scale-95 flex items-center justify-center gap-1.5"
+                        style={{ background: "#003087" }}
+                      >
+                        <i className="fa-brands fa-paypal"></i> PayPal
+                      </a>
+                    ) : (
+                      <button
+                        disabled
+                        onClick={() => showToast("Add your PayPal handle above")}
+                        className="px-2 py-2.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-400 flex items-center justify-center gap-1.5"
+                      >
+                        <i className="fa-brands fa-paypal"></i> PayPal
+                      </button>
+                    )}
+                  </div>
+
                   <div className="bg-slate-50 rounded-xl p-3">
                     <Row label="Items subtotal" value={fmt(b.subtotal)} />
                     <Row label="Tax share"      value={fmt(b.tax)} />
@@ -1303,6 +1460,14 @@ function SummaryScreen({ totals, people, restaurant, onBack, onSend }) {
                     <div className="border-t border-slate-200 my-2"></div>
                     <Row label="Total"          value={fmt(b.total)} bold />
                   </div>
+
+                  <button
+                    onClick={() => copyMessage(b)}
+                    className="w-full btn-secondary"
+                  >
+                    <i className={`fa-regular ${copiedId === b.person.id ? "fa-circle-check text-emerald-600" : "fa-copy"} mr-2`}></i>
+                    {copiedId === b.person.id ? "Copied!" : "Copy message"}
+                  </button>
                 </div>
               )}
             </div>
@@ -1310,11 +1475,11 @@ function SummaryScreen({ totals, people, restaurant, onBack, onSend }) {
         })}
       </div>
 
-      <div className="flex-1"></div>
+      <div className="flex-1 min-h-[80px]"></div>
 
       <div className="action-bar">
-        <button className="btn-primary" onClick={onSend}>
-          <i className="fa-solid fa-paper-plane mr-2"></i> Send payment requests
+        <button className="btn-primary" onClick={onDone}>
+          <i className="fa-solid fa-check mr-2"></i> Done
         </button>
       </div>
     </div>
@@ -2169,12 +2334,43 @@ function App() {
     setScreen("review");
   };
   // Called by ReviewItemsScreen when the user confirms the items.
+  // 1-tap mode: for a real scan / manual entry, reset the People screen
+  // to **2 empty rows** so the user just picks the count + types names.
+  // For the "Try sample" demo, keep the pre-filled STARTER_PEOPLE so the
+  // demo flows end-to-end without any typing.
   const handleReviewNext = ({ restaurant: r, items: confirmed }) => {
     setRestaurant(r);
-    setItems(confirmed.map((it) => ({ id: it.id || uid(), name: it.name.trim(), price: Number(it.price) || 0 })));
-    setAssignments({}); // start with no assignments — user will tap on Items screen
+    const cleanItems = confirmed.map((it) => ({
+      id: it.id || uid(),
+      name: it.name.trim(),
+      price: Number(it.price) || 0
+    }));
+    setItems(cleanItems);
+    setAssignments({}); // will be auto-filled when transitioning people → items
     setTaxRate(pendingScan?.taxRate ?? taxRate);
+    // Sample demo keeps the named people; real scan / manual start fresh.
+    const isSample = pendingScan?.source === "ai" &&
+                     pendingScan?.restaurant === DUMMY_RECEIPT.restaurant;
+    if (!isSample) {
+      setPeople([
+        { id: uid(), name: "", color: PRESET_COLORS[0], phone: "", email: "" },
+        { id: uid(), name: "", color: PRESET_COLORS[1], phone: "", email: "" }
+      ]);
+    }
     setScreen("people");
+  };
+
+  // 1-tap mode: when leaving People → Items, auto-assign every item to
+  // every person (even split). The Items screen still lets the user
+  // refine per-item if they want, but the default is "everyone shares".
+  const handlePeopleNext = () => {
+    const everyone = people.map((p) => p.id);
+    const fullAssignments = {};
+    items.forEach((it) => {
+      fullAssignments[it.id] = everyone;
+    });
+    setAssignments(fullAssignments);
+    setScreen("items");
   };
 
   /* ---- Auth handlers ---- */
@@ -2245,7 +2441,7 @@ function App() {
         people={people}
         setPeople={setPeople}
         onBack={() => setScreen("review")}
-        onNext={() => setScreen("items")}
+        onNext={handlePeopleNext}
       />
     );
   } else if (screen === "items") {
@@ -2274,21 +2470,14 @@ function App() {
       />
     );
   } else if (screen === "summary") {
+    // 1-tap flow: Summary now folds in the Send actions per person
+    // (SMS / Email / PayPal deep links), so this is the final screen.
     body = (
       <SummaryScreen
         totals={totals}
         people={people}
         restaurant={restaurant}
         onBack={() => setScreen("tip")}
-        onSend={() => setScreen("send")}
-      />
-    );
-  } else if (screen === "send") {
-    body = (
-      <SendScreen
-        totals={totals}
-        restaurant={restaurant}
-        onBack={() => setScreen("summary")}
         onDone={reset}
         showToast={showToast}
       />
