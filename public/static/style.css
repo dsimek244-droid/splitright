@@ -252,3 +252,250 @@ input[type=number] { -moz-appearance: textfield; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* =========================================================================
+   Dark mode — activated by adding `dark` to <html>. A pre-React inline
+   script in index.tsx sets this based on splitright.v1.theme so there's
+   no white-flash for dark-mode users.
+   ========================================================================= */
+html.dark body {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(99,102,241,0.18), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(16,185,129,0.10), transparent 60%),
+    #0B1220;
+  color: #E5E7EB;
+}
+html.dark .card {
+  background: #111827;
+  border-color: rgba(255,255,255,0.06);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.4);
+}
+html.dark .action-bar {
+  background: linear-gradient(180deg, rgba(11,18,32,0) 0%, rgba(11,18,32,0.85) 30%, rgba(11,18,32,1) 60%);
+}
+html.dark .btn-secondary {
+  background: #1F2937;
+  color: #F1F5F9;
+  border-color: #374151;
+}
+html.dark .btn-ghost { color: #A5B4FC; }
+html.dark .btn-google {
+  background: #1F2937;
+  color: #F1F5F9;
+  border-color: #374151;
+}
+html.dark .item-row {
+  background: #111827;
+  border-color: rgba(255,255,255,0.06);
+}
+html.dark .assign-pill {
+  background: #1F2937;
+  color: #CBD5E1;
+}
+html.dark .tip-option {
+  background: #111827;
+  border-color: #374151;
+  color: #E5E7EB;
+}
+html.dark .tip-option.is-on {
+  background: #1E1B4B;
+  border-color: #6366F1;
+  color: #C7D2FE;
+}
+html.dark .plan-card {
+  background: #111827;
+  border-color: #374151;
+}
+html.dark .plan-card.is-on {
+  background: linear-gradient(180deg, #1E1B4B 0%, #111827 100%);
+  border-color: #6366F1;
+}
+html.dark .badge-save  { background: #064E3B; color: #6EE7B7; }
+html.dark .badge-trial { background: #1E1B4B; color: #C7D2FE; }
+
+/* Tailwind utility overrides for dark — keep the original look on light, invert greys on dark. */
+html.dark .bg-white       { background-color: #111827 !important; }
+html.dark .bg-slate-50    { background-color: #1F2937 !important; }
+html.dark .bg-slate-100   { background-color: #1F2937 !important; }
+html.dark .text-ink-900   { color: #F1F5F9 !important; }
+html.dark .text-slate-700 { color: #D1D5DB !important; }
+html.dark .text-slate-600 { color: #CBD5E1 !important; }
+html.dark .text-slate-500 { color: #94A3B8 !important; }
+html.dark .text-slate-400 { color: #94A3B8 !important; }
+html.dark .text-slate-300 { color: #64748B !important; }
+html.dark .border-slate-100 { border-color: rgba(255,255,255,0.06) !important; }
+html.dark .border-slate-200 { border-color: rgba(255,255,255,0.08) !important; }
+html.dark .ring-slate-100  { --tw-ring-color: rgba(255,255,255,0.10) !important; }
+html.dark input::placeholder { color: #64748B; }
+html.dark .bg-emerald-50 { background-color: #064E3B !important; }
+html.dark .text-emerald-600 { color: #6EE7B7 !important; }
+html.dark .bg-amber-50 { background-color: #422006 !important; }
+html.dark .text-amber-800, html.dark .text-amber-900 { color: #FCD34D !important; }
+html.dark .border-amber-300 { border-color: #92400E !important; }
+html.dark .text-amber-600 { color: #FBBF24 !important; }
+
+/* =========================================================================
+   Scan-success animation — big checkmark pop on the camera card
+   ========================================================================= */
+@keyframes scan-success-burst {
+  0%   { transform: scale(0.4); opacity: 0; }
+  35%  { transform: scale(1.15); opacity: 1; }
+  60%  { transform: scale(0.95); }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes scan-success-fade {
+  0%   { opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+.scan-success-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(16,185,129,0.55);
+  animation: scan-success-fade 1.4s ease-out both;
+  pointer-events: none;
+  z-index: 5;
+}
+.scan-success-overlay .check {
+  width: 96px; height: 96px;
+  border-radius: 9999px;
+  background: white;
+  color: #10B981;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 56px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+  animation: scan-success-burst 0.6s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+
+/* "Mark as paid" — collapsed row visual treatment */
+.paid-row { opacity: 0.62; }
+.paid-row .paid-strike { text-decoration: line-through; text-decoration-thickness: 2px; }
+
+/* The hidden share-card we render to PNG via html2canvas. Mount off-screen
+   but at full pixel density so the export is crisp. */
+.share-card-host {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 600px;   /* fixed render size for predictable PNG output */
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* =========================================================================
+   Luxury layer — premium typography, gold accents, glass cards, and
+   smooth fade-ins. Layered on top of the existing utilities so we don't
+   have to rewrite individual components.
+   ========================================================================= */
+
+/* Serif display font helper. Use on headlines you want to feel premium. */
+.font-display {
+  font-family: 'Playfair Display', Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+/* Gold/champagne accent helpers. */
+.text-gold       { color: #B8860B; }
+.text-gold-light { color: #C9A24B; }
+html.dark .text-gold       { color: #E2C97A; }
+html.dark .text-gold-light { color: #F5EDD0; }
+
+/* Hairline gold rule used to separate hero sections. */
+.lux-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(201,162,75,0.45) 50%, transparent 100%);
+}
+
+/* Glass-morphism card variant.
+   Brighter, softer, and with a faint inner gradient — used for the hero
+   panels on Scan and Summary. Keep the standard .card class for everything
+   else to preserve density and avoid over-stylizing list rows. */
+.card-lux {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.65) 100%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+          backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.6);
+  border-radius: 24px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.7) inset,
+    0 8px 28px rgba(11,18,32,0.07),
+    0 2px 6px rgba(11,18,32,0.04);
+}
+html.dark .card-lux {
+  background:
+    linear-gradient(180deg, rgba(30,41,59,0.78) 0%, rgba(17,24,39,0.78) 100%);
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.04) inset,
+    0 12px 40px rgba(0,0,0,0.5);
+}
+
+/* Hero panel — the premium hero on the Scan screen.
+   Subtle dark navy gradient with a soft gold inner glow. */
+.lux-hero {
+  position: relative;
+  border-radius: 28px;
+  padding: 22px;
+  color: white;
+  background:
+    radial-gradient(120% 100% at 0% 0%, rgba(201,162,75,0.22) 0%, transparent 55%),
+    radial-gradient(120% 100% at 100% 100%, rgba(99,102,241,0.30) 0%, transparent 60%),
+    linear-gradient(160deg, #0B1220 0%, #111827 100%);
+  box-shadow:
+    0 18px 50px rgba(11,18,32,0.30),
+    0 1px 0 rgba(255,255,255,0.06) inset;
+  overflow: hidden;
+}
+.lux-hero::after {
+  /* Faint diagonal sheen to feel like polished foil */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 35%, rgba(255,255,255,0.07) 50%, transparent 65%);
+  pointer-events: none;
+}
+
+/* Smooth fade + lift used on screen mounts and chip pops. */
+@keyframes lux-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.lux-rise { animation: lux-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.lux-rise-1 { animation: lux-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) 60ms both; }
+.lux-rise-2 { animation: lux-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) 140ms both; }
+.lux-rise-3 { animation: lux-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) 220ms both; }
+
+/* Shimmer effect on the gold "trial" / "premium" badge. */
+@keyframes lux-shimmer {
+  0%   { background-position: -120% 0; }
+  100% { background-position: 220% 0; }
+}
+.lux-shimmer {
+  background-image: linear-gradient(110deg, transparent 35%, rgba(255,255,255,0.45) 50%, transparent 65%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: lux-shimmer 2.6s ease-in-out infinite;
+}
+
+/* Premium primary button — gold-on-navy variant for hero CTAs. */
+.btn-lux {
+  background: linear-gradient(135deg, #C9A24B 0%, #B8860B 100%);
+  color: #0B1220;
+  font-weight: 800;
+  border-radius: 18px;
+  padding: 16px 20px;
+  width: 100%;
+  font-size: 16px;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 10px 30px rgba(201,162,75,0.45),
+    0 1px 0 rgba(255,255,255,0.5) inset;
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+.btn-lux:active {
+  transform: translateY(1px) scale(0.99);
+  box-shadow: 0 6px 18px rgba(201,162,75,0.35), 0 1px 0 rgba(255,255,255,0.5) inset;
+}
+.btn-lux:disabled { opacity: 0.55; box-shadow: none; }
