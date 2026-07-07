@@ -230,7 +230,8 @@ const CURRENCIES = {
   KRW: { code: "KRW", symbol: "₩",   name: "Korean Won",       locale: "ko-KR", decimals: 0, monthly: 6500,  yearly: 52000 },
   BRL: { code: "BRL", symbol: "R$",  name: "Brazilian Real",   locale: "pt-BR", decimals: 2, monthly: 24.90, yearly: 199.90 },
   MXN: { code: "MXN", symbol: "MX$", name: "Mexican Peso",     locale: "es-MX", decimals: 2, monthly: 99,    yearly: 799 },
-  CHF: { code: "CHF", symbol: "CHF", name: "Swiss Franc",      locale: "de-CH", decimals: 2, monthly: 4.99,  yearly: 39.99 }
+  CHF: { code: "CHF", symbol: "CHF", name: "Swiss Franc",      locale: "de-CH", decimals: 2, monthly: 4.99,  yearly: 39.99 },
+  CZK: { code: "CZK", symbol: "Kč",  name: "Czech Koruna",     locale: "cs-CZ", decimals: 2, monthly: 119,   yearly: 949 }
 };
 
 /* ----------------------------- Regions ---------------------------------- */
@@ -255,7 +256,8 @@ const REGIONS = {
   CN: { code: "CN", flag: "🇨🇳", name: "China",           currency: "CNY", defaultTip: 0.00, defaultTax: 0.06,   providers: ["paypal"] },
   IN: { code: "IN", flag: "🇮🇳", name: "India",           currency: "INR", defaultTip: 0.10, defaultTax: 0.05,   providers: ["paypal"] },
   BR: { code: "BR", flag: "🇧🇷", name: "Brazil",          currency: "BRL", defaultTip: 0.10, defaultTax: 0.10,   providers: ["paypal"] },
-  MX: { code: "MX", flag: "🇲🇽", name: "Mexico",          currency: "MXN", defaultTip: 0.10, defaultTax: 0.16,   providers: ["paypal"] }
+  MX: { code: "MX", flag: "🇲🇽", name: "Mexico",          currency: "MXN", defaultTip: 0.10, defaultTax: 0.16,   providers: ["paypal"] },
+  CZ: { code: "CZ", flag: "🇨🇿", name: "Czech Republic",  currency: "CZK", defaultTip: 0.10, defaultTax: 0.21,   providers: ["revolut", "paypal"] }
 };
 
 /* Detect a sensible default region. Tries the IANA timezone first
@@ -280,7 +282,8 @@ function detectRegion() {
       "Europe/Rome": "IT", "Europe/Amsterdam": "NL", "Europe/Brussels": "NL",
       "Europe/Zurich": "CH", "Europe/Vienna": "DE", "Europe/Lisbon": "BR",
       "Europe/Stockholm": "DE", "Europe/Helsinki": "DE", "Europe/Oslo": "DE",
-      "Europe/Copenhagen": "DE", "Europe/Warsaw": "DE", "Europe/Prague": "DE",
+      "Europe/Copenhagen": "DE", "Europe/Warsaw": "DE", "Europe/Prague": "CZ",
+      "Europe/Bratislava": "CZ",
       "Asia/Tokyo": "JP", "Asia/Seoul": "KR",
       "Asia/Shanghai": "CN", "Asia/Hong_Kong": "CN", "Asia/Taipei": "CN",
       "Asia/Kolkata": "IN", "Asia/Calcutta": "IN", "Asia/Mumbai": "IN",
@@ -757,7 +760,7 @@ function Toast({ message, onDone }) {
    no OpenAI key (or fails), falls back to Tesseract.js in-browser OCR with
    a real progress bar. Then hands the parsed items off to ReviewItemsScreen.
    ========================================================================= */
-function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, onOpenAccount, onOpenHistory, hasHistory }) {
+function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, freeSplitsLeft, isSubscribed, onOpenAccount, onOpenHistory, hasHistory }) {
   const [phase, setPhase] = useState("idle"); // idle | reading | ocr | success | error
   const [progress, setProgress] = useState(0);
   const [statusLabel, setStatusLabel] = useState("");
@@ -768,6 +771,9 @@ function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, 
   const daysLeft = subscription?.status === "trial"
     ? Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / (24 * 60 * 60 * 1000)))
     : null;
+
+  // Show the freemium counter for non-subscribers who still have free splits.
+  const showFreeCounter = !isSubscribed && Number.isFinite(freeSplitsLeft) && freeSplitsLeft > 0;
 
   /* Flash a green checkmark + buzz, then hand off to the Review screen.
      The brief delay lets the user actually see the success state. */
@@ -916,6 +922,12 @@ function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, 
           {daysLeft !== null && (
             <span className="ml-1 badge badge-trial relative overflow-hidden">
               <i className="fa-solid fa-gift text-[9px]"></i> Trial · {daysLeft}d left
+              <span className="lux-shimmer absolute inset-0"></span>
+            </span>
+          )}
+          {showFreeCounter && (
+            <span className="ml-1 badge badge-trial relative overflow-hidden">
+              <i className="fa-solid fa-gift text-[9px]"></i> {freeSplitsLeft} free split{freeSplitsLeft === 1 ? "" : "s"} left
               <span className="lux-shimmer absolute inset-0"></span>
             </span>
           )}
@@ -2731,7 +2743,7 @@ function SignInScreen({ onSignedIn }) {
           Welcome to <span className="text-brand-600">SplitRight</span>
         </h1>
         <p className="mt-3 text-slate-500 text-base max-w-xs mx-auto">
-          Sign in to start your <b className="text-ink-900">7-day free trial</b>. No charge today.
+          Try <b className="text-ink-900">3 splits free</b>, no card needed. Upgrade only when you're hooked.
         </p>
       </div>
 
@@ -3011,7 +3023,7 @@ function CardField({ label, value, onChange, error, rightIcon, secure, ...rest }
   );
 }
 
-function PaywallScreen({ user, onSubscribed, onSignOut }) {
+function PaywallScreen({ user, onSubscribed, onSignOut, freeSplitsUsed = 0 }) {
   const { currency, region } = useCurrency();
   const cur = CURRENCIES[currency] || CURRENCIES.USD;
   const localPrice = (planId) => (planId === "yearly" ? cur.yearly : cur.monthly);
@@ -3021,6 +3033,9 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [showCard, setShowCard] = useState(false);
+
+  // Has the user already tried the free splits? Adjust hero copy accordingly.
+  const hasTried = freeSplitsUsed > 0;
 
   /* Two-step trial start:
        1) User taps "Start free trial" → CardCaptureSheet opens.
@@ -3039,23 +3054,32 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
     setTimeout(() => {
       hapticSuccess();
       const now = Date.now();
-      const sub = {
+      const plan = PLANS[selected];
+      const periodMs = plan.per === "year" ? 365 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+      // If the user already tried the free splits, skip the trial and
+      // charge immediately. Otherwise honor the 7-day trial.
+      const sub = hasTried ? {
+        plan: selected,
+        status: "active",
+        activatedAt: now,
+        renewsAt: now + periodMs,
+        productId: `com.yourcompany.splitright.${selected}`,
+        paymentMethod: {
+          brand: card.brand, brandName: card.brandName, brandIcon: card.brandIcon,
+          brandColor: card.brandColor, last4: card.last4,
+          expMonth: card.expMonth, expYear: card.expYear, token: card.token
+        }
+      } : {
         plan: selected,
         status: "trial",
         trialStartedAt: now,
         trialEndsAt: now + TRIAL_MS,
-        renewsAt: now + TRIAL_MS, // first charge happens at trial end
+        renewsAt: now + TRIAL_MS,
         productId: `com.yourcompany.splitright.${selected}`,
-        // Only the *safe* card details are persisted — never the full PAN.
         paymentMethod: {
-          brand: card.brand,
-          brandName: card.brandName,
-          brandIcon: card.brandIcon,
-          brandColor: card.brandColor,
-          last4: card.last4,
-          expMonth: card.expMonth,
-          expYear: card.expYear,
-          token: card.token
+          brand: card.brand, brandName: card.brandName, brandIcon: card.brandIcon,
+          brandColor: card.brandColor, last4: card.last4,
+          expMonth: card.expMonth, expYear: card.expYear, token: card.token
         }
       };
       onSubscribed(sub);
@@ -3103,12 +3127,25 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
           <div className="inline-flex w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 items-center justify-center shadow-pop mb-4">
             <i className="fa-solid fa-crown text-white text-2xl"></i>
           </div>
-          <h1 className="text-[28px] font-black leading-tight tracking-tight">
-            Try SplitRight free<br/>for 7 days
-          </h1>
-          <p className="mt-2 text-slate-500 text-sm max-w-xs mx-auto">
-            Unlimited receipts, unlimited splits, every payment method.
-          </p>
+          {hasTried ? (
+            <>
+              <h1 className="text-[28px] font-black leading-tight tracking-tight">
+                Loved SplitRight?<br/>Keep splitting.
+              </h1>
+              <p className="mt-2 text-slate-500 text-sm max-w-xs mx-auto">
+                You've used your <b className="text-ink-900">{FREE_SPLITS} free splits</b>. Unlock unlimited — cancel anytime.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-[28px] font-black leading-tight tracking-tight">
+                Unlock<br/>SplitRight Pro
+              </h1>
+              <p className="mt-2 text-slate-500 text-sm max-w-xs mx-auto">
+                Unlimited receipts, unlimited splits, every payment method.
+              </p>
+            </>
+          )}
         </div>
       </div>
 
@@ -3120,6 +3157,7 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
           selected={selected === "yearly"}
           onSelect={() => setSelected("yearly")}
           highlight="Best value"
+          hasTried={hasTried}
         />
         <PlanRow
           plan={PLANS.monthly}
@@ -3127,6 +3165,7 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
           fmt={fmt}
           selected={selected === "monthly"}
           onSelect={() => setSelected("monthly")}
+          hasTried={hasTried}
         />
       </div>
 
@@ -3145,13 +3184,23 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
       <div className="action-bar">
         <button className="btn-primary" onClick={openCardSheet} disabled={loading}>
           {loading ? (
-            <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Starting trial…</>
+            <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> {hasTried ? "Activating…" : "Starting trial…"}</>
+          ) : hasTried ? (
+            <><i className="fa-solid fa-crown mr-2"></i> Unlock unlimited · {fmt(price)}/{plan.per}</>
           ) : (
             <><i className="fa-solid fa-lock mr-2"></i> Start 7-day free trial</>
           )}
         </button>
         <p className="text-[11px] text-slate-500 text-center mt-2 leading-relaxed px-2">
-          Free for 7 days, then <b>{fmt(price)}/{plan.per}</b> starting <b>{firstCharge}</b>.<br/>
+          {hasTried ? (
+            <>
+              You've already tried {FREE_SPLITS} free splits. Charged <b>{fmt(price)}/{plan.per}</b> today.<br/>
+            </>
+          ) : (
+            <>
+              Free for 7 days, then <b>{fmt(price)}/{plan.per}</b> starting <b>{firstCharge}</b>.<br/>
+            </>
+          )}
           Region: <b>{REGIONS[region]?.flag} {REGIONS[region]?.name}</b> · Cancel anytime · Auto-renews until canceled.
         </p>
         {/* Required by Apple Guideline 3.1.2: subscription paywalls must link to Terms + Privacy. */}
@@ -3178,7 +3227,7 @@ function PaywallScreen({ user, onSubscribed, onSignOut }) {
   );
 }
 
-function PlanRow({ plan, price, fmt, selected, onSelect, highlight }) {
+function PlanRow({ plan, price, fmt, selected, onSelect, highlight, hasTried }) {
   const monthlyEquiv = plan.id === "yearly" ? (price / 12) : null;
   return (
     <button onClick={onSelect} className={`plan-card text-left w-full ${selected ? "is-on" : ""}`}>
@@ -3193,7 +3242,11 @@ function PlanRow({ plan, price, fmt, selected, onSelect, highlight }) {
             {highlight && plan.savePct && <span className="badge badge-trial">{highlight}</span>}
           </div>
           <div className="text-xs text-slate-500 mt-0.5">
-            7-day free trial, then {fmt(price)}/{plan.per}
+            {hasTried ? (
+              <>{fmt(price)}/{plan.per}</>
+            ) : (
+              <>7-day free trial, then {fmt(price)}/{plan.per}</>
+            )}
             {monthlyEquiv && <> · just {fmt(monthlyEquiv)}/mo</>}
           </div>
         </div>
@@ -3872,11 +3925,20 @@ function HistoryScreen({ onClose, showToast }) {
 /* =========================================================================
    Root app
    ========================================================================= */
+/* Freemium: how many completed splits a user gets before the paywall
+   kicks in. This is the "let them fall in love before charging" model —
+   proven to convert far better than a 7-day trial that scares users into
+   forgetting to cancel. Bump this if conversion feels too aggressive. */
+const FREE_SPLITS = 3;
+
 function App() {
   /* ---- Auth + subscription + locale (persisted) ---- */
   const initial = loadState() || {};
   const [user, setUser] = useState(initial.user || null);
   const [subscription, setSubscription] = useState(initial.subscription || null);
+  const [freeSplitsUsed, setFreeSplitsUsed] = useState(
+    Number.isFinite(initial.freeSplitsUsed) ? initial.freeSplitsUsed : 0
+  );
   const [showAccount, setShowAccount] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   // Region + currency: persisted if present, otherwise auto-detect from browser
@@ -3915,8 +3977,10 @@ function App() {
          breakdown: [{ personId, name, color, subtotal, tax, tip, total, paid }] } */
   const [history, setHistory] = useState(Array.isArray(initial.history) ? initial.history : []);
 
-  // Persist whenever user/subscription/locale/theme/history changes
-  useEffect(() => { saveState({ user, subscription, region, currency, theme, history }); }, [user, subscription, region, currency, theme, history]);
+  // Persist whenever user/subscription/locale/theme/history/freeSplitsUsed changes
+  useEffect(() => {
+    saveState({ user, subscription, region, currency, theme, history, freeSplitsUsed });
+  }, [user, subscription, region, currency, theme, history, freeSplitsUsed]);
 
   // Build the currency context value (memoized so child components don't re-render unnecessarily)
   const currencyCtx = useMemo(() => ({
@@ -3951,10 +4015,18 @@ function App() {
     }
   }, [subscription]);
 
-  const hasAccess =
+  /* Access gate — user gets in if EITHER:
+       (a) they still have free splits remaining (freemium hook), OR
+       (b) they've subscribed and it's still valid.
+     This lets first-time users try the whole flow (up to FREE_SPLITS
+     completed splits) with zero friction — no card, no trial countdown.
+     After that, the paywall appears. */
+  const isSubscribed =
     subscription &&
     (subscription.status === "trial" || subscription.status === "active" ||
      (subscription.status === "canceled" && Date.now() < subscription.renewsAt));
+  const freeSplitsLeft = Math.max(0, FREE_SPLITS - freeSplitsUsed);
+  const hasAccess = isSubscribed || freeSplitsLeft > 0;
 
   /* ---- App state ---- */
   const [screen, setScreen] = useState("scan");
@@ -4008,6 +4080,11 @@ function App() {
   }, [people]); // eslint-disable-line
 
   const reset = () => {
+    // Freemium: only count completed splits against the free quota when
+    // the user is NOT paying. Subscribers get unlimited.
+    if (!isSubscribed) {
+      setFreeSplitsUsed((n) => n + 1);
+    }
     setPeople(STARTER_PEOPLE);
     setItems(DUMMY_RECEIPT.items);
     setAssignments(STARTER_ASSIGNMENTS);
@@ -4097,9 +4174,19 @@ function App() {
   const handleSignOut = () => {
     setUser(null);
     setSubscription(null);
+    // Note: we do NOT reset freeSplitsUsed on sign-out — the quota lives
+    // per device so a user can't just sign out + back in to reset it.
     setShowAccount(false);
     saveState({ user: null, subscription: null });
-    reset();
+    // Reset flow state without incrementing the free counter (they didn't just finish a split).
+    setPeople(STARTER_PEOPLE);
+    setItems(DUMMY_RECEIPT.items);
+    setAssignments(STARTER_ASSIGNMENTS);
+    setTipPct(0.20);
+    setTaxRate(DUMMY_RECEIPT.taxRate);
+    setRestaurant(DUMMY_RECEIPT.restaurant);
+    setPendingScan(null);
+    setScreen("scan");
   };
   const handleCancel = () => {
     if (!subscription) return;
@@ -4118,6 +4205,7 @@ function App() {
         user={user}
         onSubscribed={handleSubscribed}
         onSignOut={handleSignOut}
+        freeSplitsUsed={freeSplitsUsed}
       />
     );
   } else if (showHistory) {
@@ -4146,6 +4234,8 @@ function App() {
         onSkipManual={handleSkipManual}
         user={user}
         subscription={subscription}
+        freeSplitsLeft={freeSplitsLeft}
+        isSubscribed={isSubscribed}
         onOpenAccount={() => setShowAccount(true)}
         onOpenHistory={() => setShowHistory(true)}
         hasHistory={history.length > 0}
