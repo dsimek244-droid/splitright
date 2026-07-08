@@ -2715,23 +2715,140 @@ function GoogleG() {
 
 function SignInScreen({ onSignedIn }) {
   const [loading, setLoading] = useState(false);
+  const [banned, setBanned] = useState(false);
+  const [banInfo, setBanInfo] = useState(null); // { emailCount, limit }
+  const [error, setError] = useState("");
+  const [emailInput, setEmailInput] = useState("");
+  const [showEmailForm, setShowEmailForm] = useState(false);
 
-  /* Mocked Google sign-in.
-     For App Store builds replace with:
-       - iOS: @codetrix-studio/capacitor-google-auth  (and add Sign in with Apple — Apple requires it if you offer Google)
-       - Web: Google Identity Services (GIS) one-tap prompt */
-  const signIn = () => {
+  /* Register this account with the backend abuse-tracker BEFORE granting
+     access. The server returns 403 { banned: true } if this device's IP
+     has already registered > MAX_EMAILS_PER_IP different email addresses.
+     This is what stops people from spinning up throwaway emails to keep
+     getting the 3 free splits forever. */
+  const registerAndSignIn = async (email, name, provider) => {
+    setError("");
     setLoading(true);
-    setTimeout(() => {
-      const user = {
-        name: "Demo User",
-        email: "demo@gmail.com",
-        avatar: null, // we render initials when no photo
-        provider: "google"
-      };
-      onSignedIn(user);
-    }, 900);
+    try {
+      const r = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = await r.json().catch(() => ({}));
+
+      if (!r.ok || data.banned) {
+        hapticError();
+        setBanned(true);
+        setBanInfo({
+          emailCount: data.emailCount ?? null,
+          limit: data.limit ?? null,
+          reason: data.reason || "banned"
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Registration OK — proceed with sign-in.
+      hapticSuccess();
+      onSignedIn({ name, email, avatar: null, provider });
+    } catch (e) {
+      // Network failure — fail OPEN so we don't lock out real users on a
+      // flaky connection. The next sign-in from this device will still
+      // hit the tracker.
+      onSignedIn({ name, email, avatar: null, provider });
+    }
   };
+
+  /* Mocked Google sign-in. For App Store builds swap for:
+       - iOS: @codetrix-studio/capacitor-google-auth  (and add Sign in with Apple)
+       - Web: Google Identity Services (GIS) one-tap prompt */
+  const signInGoogle = () => {
+    hapticTap();
+    // In production the OAuth response gives us the real email.
+    // For demo, generate a random address so each sign-in counts as a
+    // distinct account against the IP — this lets you actually TEST the ban.
+    const rand = Math.random().toString(36).slice(2, 8);
+    registerAndSignIn(`demo-${rand}@gmail.com`, "Demo User", "google");
+  };
+
+  const signInApple = () => {
+    hapticTap();
+    const rand = Math.random().toString(36).slice(2, 8);
+    registerAndSignIn(`demo-${rand}@icloud.com`, "Demo User", "apple");
+  };
+
+  const signInEmail = () => {
+    hapticTap();
+    if (!showEmailForm) { setShowEmailForm(true); return; }
+    const email = emailInput.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("Please enter a valid email");
+      hapticError();
+      return;
+    }
+    registerAndSignIn(email, email.split("@")[0], "email");
+  };
+
+  // Banned screen — device has exceeded the free-account limit.
+  if (banned) {
+    return (
+      <div className="app-shell flex flex-col">
+        <div className="px-5 pt-16 text-center pop-in">
+          <div className="inline-flex w-16 h-16 rounded-2xl bg-red-100 items-center justify-center mb-5">
+            <i className="fa-solid fa-shield-halved text-red-600 text-2xl"></i>
+          </div>
+          <h1 className="font-display text-[28px] font-black tracking-tight leading-tight text-ink-900">
+            Too many accounts
+          </h1>
+          <p className="mt-3 text-slate-500 text-sm max-w-xs mx-auto leading-relaxed">
+            This device has already used <b className="text-ink-900">{banInfo?.limit ?? 3} free accounts</b>.
+            To keep using SplitRight, please subscribe — no more free splits from this device.
+          </p>
+        </div>
+        <div className="px-5 mt-8">
+          <div className="card p-5">
+            <div className="text-xs text-slate-500 leading-relaxed">
+              <b className="text-ink-900">Why is this happening?</b><br/>
+              To keep the free tier fair, each device can create up to {banInfo?.limit ?? 3} free accounts.
+              You've reached that limit. Subscribers get unlimited splits from any device.
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              hapticTap();
+              // Sign in as a "locked" user so the app can route them
+              // straight to the paywall. hasAccess will be false because
+              // freeSplitsUsed is set to FREE_SPLITS by the parent.
+              onSignedIn({
+                name: "Guest",
+                email: `banned-${Date.now()}@device.local`,
+                avatar: null,
+                provider: "banned",
+                banned: true
+              });
+            }}
+            className="btn-primary mt-4 w-full"
+          >
+            <i className="fa-solid fa-crown mr-2"></i> Subscribe to keep splitting
+          </button>
+          <button
+            onClick={() => { setBanned(false); setBanInfo(null); }}
+            className="w-full text-xs text-slate-400 font-semibold mt-3 py-2"
+          >
+            Go back
+          </button>
+        </div>
+        <div className="flex-1"></div>
+        <div className="px-5 pb-8 text-center">
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            Think this is a mistake? Contact us at{" "}
+            <a href="/legal/support" className="text-brand-600 font-semibold">support</a>.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell flex flex-col">
@@ -2749,7 +2866,7 @@ function SignInScreen({ onSignedIn }) {
 
       <div className="px-5 mt-10">
         <div className="card p-5 space-y-3">
-          <button onClick={signIn} disabled={loading} className="btn-google">
+          <button onClick={signInGoogle} disabled={loading} className="btn-google">
             {loading ? (
               <><i className="fa-solid fa-circle-notch fa-spin"></i> Signing in…</>
             ) : (
@@ -2757,7 +2874,7 @@ function SignInScreen({ onSignedIn }) {
             )}
           </button>
 
-          <button onClick={signIn} disabled={loading} className="btn-google" style={{ background: '#000', color: '#fff', borderColor: '#000' }}>
+          <button onClick={signInApple} disabled={loading} className="btn-google" style={{ background: '#000', color: '#fff', borderColor: '#000' }}>
             <i className="fa-brands fa-apple text-lg"></i>
             <span>Continue with Apple</span>
           </button>
@@ -2768,15 +2885,32 @@ function SignInScreen({ onSignedIn }) {
             <span className="flex-1 h-px bg-slate-200"></span>
           </div>
 
-          <button onClick={signIn} disabled={loading} className="btn-secondary">
-            <i className="fa-regular fa-envelope mr-2"></i> Continue with email
+          {showEmailForm && (
+            <input
+              type="email"
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              placeholder="you@example.com"
+              autoCapitalize="off"
+              autoCorrect="off"
+              className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-brand-500/40 border border-slate-200 dark:border-slate-700"
+            />
+          )}
+          <button onClick={signInEmail} disabled={loading} className="btn-secondary">
+            <i className="fa-regular fa-envelope mr-2"></i>
+            {showEmailForm ? "Continue" : "Continue with email"}
           </button>
+          {error && (
+            <p className="text-[11px] text-red-500 font-semibold text-center">
+              <i className="fa-solid fa-triangle-exclamation mr-1"></i> {error}
+            </p>
+          )}
         </div>
 
         <p className="text-[11px] text-slate-400 text-center mt-4 leading-relaxed">
           By continuing you agree to our{" "}
-          <a href="#" className="text-brand-600 font-semibold">Terms</a> and{" "}
-          <a href="#" className="text-brand-600 font-semibold">Privacy Policy</a>.
+          <a href="/legal/terms" className="text-brand-600 font-semibold">Terms</a> and{" "}
+          <a href="/legal/privacy" className="text-brand-600 font-semibold">Privacy Policy</a>.
         </p>
       </div>
 
@@ -4168,6 +4302,12 @@ function App() {
   /* ---- Auth handlers ---- */
   const handleSignedIn = (u) => {
     setUser(u);
+    // If the sign-in flow told us this device is banned, force-consume
+    // all free splits so the paywall opens immediately. Only paying
+    // customers proceed from here.
+    if (u?.banned) {
+      setFreeSplitsUsed(FREE_SPLITS);
+    }
     // If they already had a subscription saved (e.g. came back), keep it.
   };
   const handleSubscribed = (sub) => setSubscription(sub);

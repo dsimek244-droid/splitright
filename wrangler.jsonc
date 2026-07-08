@@ -5,16 +5,22 @@
   "pages_build_output_dir": "./dist",
   "compatibility_flags": [
     "nodejs_compat"
+  ],
+  // ABUSE_KV — tracks how many distinct email accounts each IP has registered.
+  // The `id` shown here is only used for production; for `wrangler pages dev`
+  // local mode, wrangler creates a local KV store in .wrangler/state that
+  // maps the same binding name automatically.
+  // TODO before production: run `npx wrangler kv namespace create ABUSE_KV`
+  // with a real CLOUDFLARE_API_TOKEN and replace the id below.
+  "kv_namespaces": [
+    {
+      "binding": "ABUSE_KV",
+      "id": "abuse_kv_placeholder_replace_before_prod"
+    }
   ]
   // "vars": {
   //   "MY_VAR": "my-variable"
   // },
-  // "kv_namespaces": [
-  //   {
-  //     "binding": "MY_KV_NAMESPACE",
-  //     "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-  //   }
-  // ],
   // "r2_buckets": [
   //   {
   //     "binding": "MY_BUCKET",

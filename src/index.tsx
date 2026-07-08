@@ -7,7 +7,19 @@ type Bindings = {
   // Legacy: direct OpenAI-compatible endpoint
   OPENAI_API_KEY?: string
   OPENAI_BASE_URL?: string
+  // KV — tracks abuse: which emails came from which IPs, and IPs we've banned.
+  // Bound in wrangler.jsonc as "ABUSE_KV". On local dev, wrangler creates a
+  // local KV store automatically under .wrangler/state so the binding works
+  // without a Cloudflare API token.
+  ABUSE_KV?: KVNamespace
 }
+
+/* ──────────────────────────────────────────────────────────────────
+   Abuse-tracking constants
+   ────────────────────────────────────────────────────────────────── */
+const MAX_EMAILS_PER_IP = 3           // >3 distinct emails from one IP → ban
+const IP_RECORD_TTL_SEC = 60 * 60 * 24 * 90  // 90-day rolling window
+const BAN_TTL_SEC       = 60 * 60 * 24 * 365 // ban lasts 1 year
 const app = new Hono<{ Bindings: Bindings }>()
 
 /* ──────────────────────────────────────────────────────────────────
@@ -325,6 +337,115 @@ function legalShell(title: string, bodyHtml: string) {
 </body>
 </html>`
 }
+
+/* ──────────────────────────────────────────────────────────────────
+   POST /api/auth/register
+   Body: { email: string }
+
+   Abuse defense — one device (IP) can register up to MAX_EMAILS_PER_IP
+   distinct email accounts. After that, the IP is banned and every sign-in
+   from it returns 403 { banned: true }.
+
+   This works because Cloudflare Workers see the true client IP in the
+   CF-Connecting-IP header (unspoofable — set by Cloudflare's edge, not
+   the browser). localStorage tricks and incognito windows all funnel to
+   the same public IP, so the ban survives them.
+
+   Subscribed users bypass this check on the client side — if you're
+   paying we don't care how many aliases you use.
+
+   KV data model:
+     ip:<hash>          → JSON { emails: string[], firstSeenAt: ISO }
+     ban:<hash>         → "1" (presence means banned)
+   Keys are SHA-256 of the IP so raw IPs never sit in KV plaintext (GDPR
+   principle of minimization).
+   ────────────────────────────────────────────────────────────────── */
+async function hashIp(ip: string): Promise<string> {
+  const enc = new TextEncoder().encode(ip + '|splitright-salt-v1')
+  const buf = await crypto.subtle.digest('SHA-256', enc)
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+app.post('/api/auth/register', async (c) => {
+  // Get the true client IP. On Cloudflare this is set by the edge and
+  // cannot be spoofed by the browser. Fall back to x-forwarded-for /
+  // 'unknown' for local wrangler runs.
+  const ip =
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
+    c.req.header('x-real-ip') ||
+    'local-dev'
+
+  let body: any = null
+  try { body = await c.req.json() } catch { /* noop */ }
+  const rawEmail = String(body?.email || '').trim().toLowerCase()
+
+  // Basic email shape check — no need for RFC-full validation, just enough
+  // to reject empty / junk values.
+  if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+    return c.json({ ok: false, reason: 'bad-email' }, 400)
+  }
+
+  // Normalize: gmail-style dots + plus-tags get folded so
+  // "abuser+1@gmail.com" and "abuser+2@gmail.com" count as ONE account.
+  // This closes the most common abuse loophole.
+  const [local, domain] = rawEmail.split('@')
+  const strippedLocal = local.split('+')[0].replace(/\./g, '')
+  const normalizedEmail = `${strippedLocal}@${domain}`
+
+  const kv = c.env?.ABUSE_KV
+  if (!kv) {
+    // KV unavailable (e.g. plain node dev without wrangler). Fail OPEN so
+    // developers aren't locked out. Production must have KV configured.
+    return c.json({ ok: true, emailCount: 1, degraded: true })
+  }
+
+  const ipKey = 'ip:' + await hashIp(ip)
+  const banKey = 'ban:' + await hashIp(ip)
+
+  // 1) If already banned, short-circuit.
+  const isBanned = await kv.get(banKey)
+  if (isBanned) {
+    return c.json({ ok: false, banned: true, reason: 'ip-banned' }, 403)
+  }
+
+  // 2) Load prior emails for this IP.
+  const prior = await kv.get(ipKey, 'json') as { emails: string[]; firstSeenAt: string } | null
+  const emails = new Set<string>(prior?.emails || [])
+  const wasAlreadyKnown = emails.has(normalizedEmail)
+  emails.add(normalizedEmail)
+
+  // 3) If this pushes the IP over the limit, ban it.
+  if (emails.size > MAX_EMAILS_PER_IP) {
+    await kv.put(banKey, '1', { expirationTtl: BAN_TTL_SEC })
+    return c.json({
+      ok: false,
+      banned: true,
+      reason: 'too-many-accounts',
+      emailCount: emails.size,
+      limit: MAX_EMAILS_PER_IP
+    }, 403)
+  }
+
+  // 4) Otherwise record the (potentially new) email and let them through.
+  if (!wasAlreadyKnown) {
+    await kv.put(
+      ipKey,
+      JSON.stringify({
+        emails: [...emails],
+        firstSeenAt: prior?.firstSeenAt || new Date().toISOString()
+      }),
+      { expirationTtl: IP_RECORD_TTL_SEC }
+    )
+  }
+
+  return c.json({
+    ok: true,
+    emailCount: emails.size,
+    limit: MAX_EMAILS_PER_IP,
+    isNew: !wasAlreadyKnown
+  })
+})
 
 app.get('/legal/privacy', (c) => c.html(legalShell('Privacy Policy', `
 <p>SplitRight ("we", "us", "the app") is a bill-splitting tool. This Privacy Policy
