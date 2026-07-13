@@ -529,14 +529,14 @@ required (subpoena, court order) and will notify you when permitted.</p>
   <li>Delete your account and all associated data.</li>
   <li>Withdraw consent at any time by signing out and deleting the app.</li>
 </ul>
-<p>To exercise any of these rights, email <a href="mailto:privacy@splitright.app">privacy@splitright.app</a>.
+<p>To exercise any of these rights, email <a href="mailto:splitrightly@gmail.com">splitrightly@gmail.com</a>.
 We respond within 30 days. GDPR, CCPA, and Apple App Tracking Transparency rights
 apply.</p>
 
 <h2>7. Children</h2>
 <p>SplitRight is not directed at children under 13 (or 16 in the EU). We do not
 knowingly collect data from children. If you believe a child has provided us
-data, email <a href="mailto:privacy@splitright.app">privacy@splitright.app</a> and
+data, email <a href="mailto:splitrightly@gmail.com">splitrightly@gmail.com</a> and
 we will delete it.</p>
 
 <h2>8. Security</h2>
@@ -556,8 +556,8 @@ takes effect. The "Last updated" date at the top of this page always reflects th
 current version.</p>
 
 <h2>11. Contact</h2>
-<p>Privacy questions: <a href="mailto:privacy@splitright.app">privacy@splitright.app</a><br/>
-Support: <a href="mailto:support@splitright.app">support@splitright.app</a></p>
+<p>All questions: <a href="mailto:splitrightly@gmail.com">splitrightly@gmail.com</a>
+(please prefix subject with <b>[Privacy]</b> for GDPR/CCPA requests).</p>
 `)))
 
 app.get('/legal/terms', (c) => c.html(legalShell('Terms of Service', `
@@ -579,7 +579,7 @@ authority to bind that business.</p>
 <h2>3. Account</h2>
 <p>You sign in with Google or Apple. You are responsible for keeping that
 account secure. Notify us immediately at
-<a href="mailto:support@splitright.app">support@splitright.app</a> if you suspect
+<a href="mailto:splitrightly@gmail.com">splitrightly@gmail.com</a> if you suspect
 unauthorized access.</p>
 
 <h2>4. Subscriptions, Free Trial &amp; Auto-Renewal</h2>
@@ -677,8 +677,8 @@ after the effective date constitutes acceptance.</p>
 </ul>
 
 <h2>15. Contact</h2>
-<p>Questions about these Terms: <a href="mailto:legal@splitright.app">legal@splitright.app</a><br/>
-Support: <a href="mailto:support@splitright.app">support@splitright.app</a></p>
+<p>Questions about these Terms or general support:
+<a href="mailto:splitrightly@gmail.com">splitrightly@gmail.com</a>.</p>
 `)))
 
 app.get('/legal/support', (c) => c.html(legalShell('Support', `
@@ -686,10 +686,12 @@ app.get('/legal/support', (c) => c.html(legalShell('Support', `
 get help.</p>
 
 <h2>Email us</h2>
+<p>All questions go to <a href="mailto:splitrightly@gmail.com">splitrightly@gmail.com</a>.
+To help us route your message faster, please prefix the subject line:</p>
 <ul>
-  <li>General questions / bugs: <a href="mailto:support@splitright.app">support@splitright.app</a></li>
-  <li>Billing &amp; subscriptions: <a href="mailto:billing@splitright.app">billing@splitright.app</a></li>
-  <li>Privacy requests (GDPR / CCPA): <a href="mailto:privacy@splitright.app">privacy@splitright.app</a></li>
+  <li><b>[Support]</b> General questions or bug reports</li>
+  <li><b>[Billing]</b> Subscription or payment issues</li>
+  <li><b>[Privacy]</b> GDPR / CCPA requests, account deletion</li>
 </ul>
 <p>We respond within 2 business days.</p>
 
@@ -720,7 +722,7 @@ glare can occasionally cause mistakes.</p>
 phone. You can change them anytime from the Account screen.</p>
 
 <h2>Delete my account</h2>
-<p>Email <a href="mailto:privacy@splitright.app">privacy@splitright.app</a> from
+<p>Email <a href="mailto:splitrightly@gmail.com">splitrightly@gmail.com</a> from
 your account address. We delete everything within 7 days and confirm by email.</p>
 `)))
 
