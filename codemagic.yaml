@@ -1,0 +1,153 @@
+# ─── SplitRight · Codemagic iOS build ────────────────────────────────────
+#
+# Two workflows:
+#   1. ios-unsigned-debug  — builds an unsigned .app archive so you can
+#                            verify the build compiles end-to-end. Perfect
+#                            for the first push while you're still setting
+#                            up Apple certificates.
+#   2. ios-release         — builds a signed .ipa ready for TestFlight /
+#                            App Store submission. Requires code-signing
+#                            credentials configured in the Codemagic UI
+#                            under: Teams → your team → Integrations →
+#                            Apple Developer Portal (or upload a manual
+#                            .p12 + provisioning profile).
+#
+# How to trigger:
+#   • ios-unsigned-debug runs automatically on every push to `main`.
+#   • ios-release runs on git tags matching v* (e.g. v1.0.0) OR when you
+#     click "Start new build" in the Codemagic web UI.
+#
+# Env vars you MUST set in Codemagic → App Settings → Environment variables:
+#   API_BASE   Required — https URL of your deployed Cloudflare Pages
+#              backend, e.g. https://splitright.pages.dev
+#              This is what the native app calls for /api/scan-receipt
+#              and /api/auth/register.
+#
+# Signing:
+#   Add an Apple Developer integration under Teams → Integrations, then
+#   set signing.identifier below to your bundle id (com.splitright.app).
+
+workflows:
+
+  ios-unsigned-debug:
+    name: iOS unsigned debug build (verify build succeeds)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      node: 20
+      cocoapods: default
+      vars:
+        API_BASE: "https://splitright.pages.dev"
+        BUNDLE_ID: "com.splitright.app"
+    scripts:
+      - name: Install npm dependencies
+        script: |
+          npm ci
+      - name: Prepare iOS project (native bundle + cap add ios + sync)
+        script: |
+          chmod +x scripts/prepare-ios.sh
+          ./scripts/prepare-ios.sh
+      - name: Set bundle id
+        script: |
+          cd ios/App
+          # Force the bundle id on every fresh build (cap add ios uses a
+          # sensible default but we standardize it here).
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" App/Info.plist 2>/dev/null || true
+          # Update pbxproj so Xcode picks it up too.
+          sed -i '' -E "s|PRODUCT_BUNDLE_IDENTIFIER = [^;]+;|PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID;|g" App.xcodeproj/project.pbxproj
+      - name: Unsigned Xcode archive
+        script: |
+          cd ios/App
+          xcodebuild -workspace App.xcworkspace \
+                     -scheme App \
+                     -configuration Release \
+                     -sdk iphoneos \
+                     -destination "generic/platform=iOS" \
+                     CODE_SIGNING_ALLOWED=NO \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY="" \
+                     -derivedDataPath build \
+                     build
+    artifacts:
+      - ios/App/build/Build/Products/Release-iphoneos/*.app
+      - ios/App/build/Logs/**/*.log
+
+  ios-release:
+    name: iOS signed release (TestFlight / App Store)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      node: 20
+      cocoapods: default
+      # Configure ONE of these under the Codemagic UI before running:
+      #  A) integrations.app_store_connect  → uses App Store Connect API
+      #     for automatic signing. Recommended.
+      #  B) groups: [ ios_signing ] → manual .p12 + provisioning profile
+      #     (upload under Environment variables → Groups).
+      # See https://docs.codemagic.io/yaml-code-signing/signing-ios/
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.splitright.app
+      vars:
+        API_BASE: "https://splitright.pages.dev"
+        BUNDLE_ID: "com.splitright.app"
+        APP_STORE_APPLE_ID: 1234567890  # replace after creating the App Store Connect record
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'v*'
+          include: true
+    scripts:
+      - name: Install npm dependencies
+        script: |
+          npm ci
+      - name: Set version + build number from git
+        script: |
+          # Version = git tag without leading v (e.g. v1.0.3 → 1.0.3)
+          VERSION=$(git describe --tags --exact-match 2>/dev/null | sed 's/^v//')
+          echo "VERSION=$VERSION"
+          echo "BUILD_NUMBER=$BUILD_NUMBER"
+        # Codemagic auto-sets $BUILD_NUMBER (monotonically increasing across runs).
+      - name: Prepare iOS project (native bundle + cap add ios + sync)
+        script: |
+          chmod +x scripts/prepare-ios.sh
+          ./scripts/prepare-ios.sh
+      - name: Set bundle id + version + build number
+        script: |
+          cd ios/App
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" App/Info.plist
+          VERSION=$(git describe --tags --exact-match 2>/dev/null | sed 's/^v//' || echo "1.0.0")
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER"       App/Info.plist
+          sed -i '' -E "s|PRODUCT_BUNDLE_IDENTIFIER = [^;]+;|PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID;|g" App.xcodeproj/project.pbxproj
+      - name: Auto-provision code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files \
+            "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build signed .ipa
+        script: |
+          cd ios/App
+          xcode-project build-ipa \
+            --workspace App.xcworkspace \
+            --scheme App
+    artifacts:
+      - ios/App/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      # Uploads the .ipa to TestFlight automatically. You'll still need to
+      # promote it to public release inside App Store Connect once you're
+      # happy with the TestFlight build.
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # Uncomment when you're ready to submit for App Store review:
+        # submit_to_app_store: true
+        # release_type: MANUAL
