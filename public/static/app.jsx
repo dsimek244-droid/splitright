@@ -14,6 +14,18 @@
 
 const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
+/* ----------------------------- API base --------------------------------- */
+/* Web build → same-origin (empty prefix) so /api/* hits the Hono worker.
+   Native build (Capacitor) → prefix set to the deployed Cloudflare Pages
+   URL by the native index.html (see scripts/build-native.mjs). This lets
+   the exact same code power both targets without a rebuild. */
+const API_BASE = (typeof window !== "undefined" && window.__SPLITRIGHT_API_BASE__) || "";
+const IS_NATIVE = (typeof window !== "undefined" && window.__SPLITRIGHT_NATIVE__) || false;
+function apiUrl(path) {
+  if (!path.startsWith("/")) path = "/" + path;
+  return API_BASE + path;
+}
+
 /* ----------------------------- Persistence ------------------------------ */
 const STORAGE_KEY = "splitright.v1";
 
@@ -218,20 +230,25 @@ function cvvValid(cvv, brand) {
    price is what we display on the paywall; on iOS, StoreKit will deliver
    the exact local price from App Store Connect, so this is just a visual
    approximation. */
+/* Pricing philosophy: $2.99/mo baseline, yearly is 33% off (~8 months
+   for the price of 12). Local prices match Apple App Store tiers so
+   StoreKit can deliver identical numbers on iOS.
+   Yearly saves ~$12/year on USD — the "Save 33%" badge on the paywall
+   is computed from these numbers, so keep the ~33% ratio when editing. */
 const CURRENCIES = {
-  USD: { code: "USD", symbol: "$",   name: "US Dollar",        locale: "en-US", decimals: 2, monthly: 4.99,  yearly: 39.99 },
-  EUR: { code: "EUR", symbol: "€",   name: "Euro",             locale: "de-DE", decimals: 2, monthly: 4.99,  yearly: 39.99 },
-  GBP: { code: "GBP", symbol: "£",   name: "British Pound",    locale: "en-GB", decimals: 2, monthly: 4.49,  yearly: 34.99 },
-  JPY: { code: "JPY", symbol: "¥",   name: "Japanese Yen",     locale: "ja-JP", decimals: 0, monthly: 700,   yearly: 5800 },
-  CAD: { code: "CAD", symbol: "CA$", name: "Canadian Dollar",  locale: "en-CA", decimals: 2, monthly: 6.99,  yearly: 54.99 },
-  AUD: { code: "AUD", symbol: "A$",  name: "Australian Dollar",locale: "en-AU", decimals: 2, monthly: 7.99,  yearly: 64.99 },
-  INR: { code: "INR", symbol: "₹",   name: "Indian Rupee",     locale: "en-IN", decimals: 2, monthly: 399,   yearly: 2999 },
-  CNY: { code: "CNY", symbol: "¥",   name: "Chinese Yuan",     locale: "zh-CN", decimals: 2, monthly: 35,    yearly: 288 },
-  KRW: { code: "KRW", symbol: "₩",   name: "Korean Won",       locale: "ko-KR", decimals: 0, monthly: 6500,  yearly: 52000 },
-  BRL: { code: "BRL", symbol: "R$",  name: "Brazilian Real",   locale: "pt-BR", decimals: 2, monthly: 24.90, yearly: 199.90 },
-  MXN: { code: "MXN", symbol: "MX$", name: "Mexican Peso",     locale: "es-MX", decimals: 2, monthly: 99,    yearly: 799 },
-  CHF: { code: "CHF", symbol: "CHF", name: "Swiss Franc",      locale: "de-CH", decimals: 2, monthly: 4.99,  yearly: 39.99 },
-  CZK: { code: "CZK", symbol: "Kč",  name: "Czech Koruna",     locale: "cs-CZ", decimals: 2, monthly: 119,   yearly: 949 }
+  USD: { code: "USD", symbol: "$",   name: "US Dollar",        locale: "en-US", decimals: 2, monthly: 2.99,  yearly: 23.99 },
+  EUR: { code: "EUR", symbol: "€",   name: "Euro",             locale: "de-DE", decimals: 2, monthly: 2.99,  yearly: 23.99 },
+  GBP: { code: "GBP", symbol: "£",   name: "British Pound",    locale: "en-GB", decimals: 2, monthly: 2.49,  yearly: 19.99 },
+  JPY: { code: "JPY", symbol: "¥",   name: "Japanese Yen",     locale: "ja-JP", decimals: 0, monthly: 450,   yearly: 3600 },
+  CAD: { code: "CAD", symbol: "CA$", name: "Canadian Dollar",  locale: "en-CA", decimals: 2, monthly: 3.99,  yearly: 31.99 },
+  AUD: { code: "AUD", symbol: "A$",  name: "Australian Dollar",locale: "en-AU", decimals: 2, monthly: 4.99,  yearly: 39.99 },
+  INR: { code: "INR", symbol: "₹",   name: "Indian Rupee",     locale: "en-IN", decimals: 2, monthly: 249,   yearly: 1999 },
+  CNY: { code: "CNY", symbol: "¥",   name: "Chinese Yuan",     locale: "zh-CN", decimals: 2, monthly: 19,    yearly: 159 },
+  KRW: { code: "KRW", symbol: "₩",   name: "Korean Won",       locale: "ko-KR", decimals: 0, monthly: 3900,  yearly: 30900 },
+  BRL: { code: "BRL", symbol: "R$",  name: "Brazilian Real",   locale: "pt-BR", decimals: 2, monthly: 14.90, yearly: 119.90 },
+  MXN: { code: "MXN", symbol: "MX$", name: "Mexican Peso",     locale: "es-MX", decimals: 2, monthly: 59,    yearly: 479 },
+  CHF: { code: "CHF", symbol: "CHF", name: "Swiss Franc",      locale: "de-CH", decimals: 2, monthly: 2.99,  yearly: 23.99 },
+  CZK: { code: "CZK", symbol: "Kč",  name: "Czech Koruna",     locale: "cs-CZ", decimals: 0, monthly: 69,    yearly: 549 }
 };
 
 /* ----------------------------- Regions ---------------------------------- */
@@ -760,7 +777,7 @@ function Toast({ message, onDone }) {
    no OpenAI key (or fails), falls back to Tesseract.js in-browser OCR with
    a real progress bar. Then hands the parsed items off to ReviewItemsScreen.
    ========================================================================= */
-function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, freeSplitsLeft, isSubscribed, onOpenAccount, onOpenHistory, hasHistory }) {
+function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, freeSplitsLeftToday, isSubscribed, onOpenAccount, onOpenHistory, hasHistory }) {
   const [phase, setPhase] = useState("idle"); // idle | reading | ocr | success | error
   const [progress, setProgress] = useState(0);
   const [statusLabel, setStatusLabel] = useState("");
@@ -772,8 +789,8 @@ function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, 
     ? Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / (24 * 60 * 60 * 1000)))
     : null;
 
-  // Show the freemium counter for non-subscribers who still have free splits.
-  const showFreeCounter = !isSubscribed && Number.isFinite(freeSplitsLeft) && freeSplitsLeft > 0;
+  // Show the freemium counter for non-subscribers.
+  const showFreeCounter = !isSubscribed && Number.isFinite(freeSplitsLeftToday);
 
   /* Flash a green checkmark + buzz, then hand off to the Review screen.
      The brief delay lets the user actually see the success state. */
@@ -816,7 +833,7 @@ function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, 
 
     // 1) Try the server endpoint (vision LLM via OpenRouter)
     try {
-      const r = await fetch("/api/scan-receipt", {
+      const r = await fetch(apiUrl("/api/scan-receipt"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: previewDataUrl })
@@ -925,10 +942,15 @@ function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, 
               <span className="lux-shimmer absolute inset-0"></span>
             </span>
           )}
-          {showFreeCounter && (
+          {showFreeCounter && freeSplitsLeftToday > 0 && (
             <span className="ml-1 badge badge-trial relative overflow-hidden">
-              <i className="fa-solid fa-gift text-[9px]"></i> {freeSplitsLeft} free split{freeSplitsLeft === 1 ? "" : "s"} left
+              <i className="fa-solid fa-gift text-[9px]"></i> 1 free split today
               <span className="lux-shimmer absolute inset-0"></span>
+            </span>
+          )}
+          {showFreeCounter && freeSplitsLeftToday === 0 && (
+            <span className="ml-1 badge badge-trial relative overflow-hidden" style={{ background: "rgba(148,163,184,0.15)" }}>
+              <i className="fa-solid fa-hourglass-half text-[9px]"></i> Free split used — resets tomorrow
             </span>
           )}
           <div className="flex-1"></div>
@@ -963,6 +985,24 @@ function ScanScreen({ onScanned, onUseSample, onSkipManual, user, subscription, 
             <p className="mt-1 text-base font-semibold text-slate-700 dark:text-slate-300">
               {user.name?.split(" ")[0] || "Friend"}
             </p>
+          </div>
+        )}
+
+        {/* Freemium info banner — informs non-subscribers of the 1-per-day rule.
+            Shown ONLY when they still have today's free split available.
+            Once they use it we show the paywall instead (App-level gate). */}
+        {!isSubscribed && freeSplitsLeftToday > 0 && (
+          <div className="mt-4 rounded-2xl border border-gold-300 bg-gold-50 dark:bg-slate-800 dark:border-gold-700 px-4 py-3 flex items-start gap-3 lux-rise">
+            <i className="fa-solid fa-gift text-gold text-lg mt-0.5"></i>
+            <div className="flex-1">
+              <div className="text-[13px] font-bold text-ink-900 dark:text-white">
+                You get 1 free split per day
+              </div>
+              <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed mt-0.5">
+                Free splits don't stack — unused days don't carry over.
+                Want unlimited? Subscribe from Account.
+              </div>
+            </div>
           </div>
         )}
 
@@ -2730,7 +2770,7 @@ function SignInScreen({ onSignedIn }) {
     setError("");
     setLoading(true);
     try {
-      const r = await fetch("/api/auth/register", {
+      const r = await fetch(apiUrl("/api/auth/register"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email })
@@ -2819,7 +2859,7 @@ function SignInScreen({ onSignedIn }) {
               hapticTap();
               // Sign in as a "locked" user so the app can route them
               // straight to the paywall. hasAccess will be false because
-              // freeSplitsUsed is set to FREE_SPLITS by the parent.
+              // handleSignedIn marks today's free split as consumed.
               onSignedIn({
                 name: "Guest",
                 email: `banned-${Date.now()}@device.local`,
@@ -2860,7 +2900,7 @@ function SignInScreen({ onSignedIn }) {
           Welcome to <span className="text-brand-600">SplitRight</span>
         </h1>
         <p className="mt-3 text-slate-500 text-base max-w-xs mx-auto">
-          Try <b className="text-ink-900">3 splits free</b>, no card needed. Upgrade only when you're hooked.
+          <b className="text-ink-900">1 free split every day</b>, no card needed. Subscribe anytime for unlimited.
         </p>
       </div>
 
@@ -3157,7 +3197,7 @@ function CardField({ label, value, onChange, error, rightIcon, secure, ...rest }
   );
 }
 
-function PaywallScreen({ user, onSubscribed, onSignOut, freeSplitsUsed = 0 }) {
+function PaywallScreen({ user, onSubscribed, onSignOut, freeSplitsUsed = 0, limitReason }) {
   const { currency, region } = useCurrency();
   const cur = CURRENCIES[currency] || CURRENCIES.USD;
   const localPrice = (planId) => (planId === "yearly" ? cur.yearly : cur.monthly);
@@ -3264,10 +3304,11 @@ function PaywallScreen({ user, onSubscribed, onSignOut, freeSplitsUsed = 0 }) {
           {hasTried ? (
             <>
               <h1 className="text-[28px] font-black leading-tight tracking-tight">
-                Loved SplitRight?<br/>Keep splitting.
+                Today's free split<br/>is used.
               </h1>
               <p className="mt-2 text-slate-500 text-sm max-w-xs mx-auto">
-                You've used your <b className="text-ink-900">{FREE_SPLITS} free splits</b>. Unlock unlimited — cancel anytime.
+                Come back <b className="text-ink-900">tomorrow</b> for another free split,
+                or unlock <b className="text-ink-900">unlimited</b> with a subscription.
               </p>
             </>
           ) : (
@@ -3276,7 +3317,7 @@ function PaywallScreen({ user, onSubscribed, onSignOut, freeSplitsUsed = 0 }) {
                 Unlock<br/>SplitRight Pro
               </h1>
               <p className="mt-2 text-slate-500 text-sm max-w-xs mx-auto">
-                Unlimited receipts, unlimited splits, every payment method.
+                Unlimited splits, every day. No 1-per-day limit.
               </p>
             </>
           )}
@@ -3328,7 +3369,7 @@ function PaywallScreen({ user, onSubscribed, onSignOut, freeSplitsUsed = 0 }) {
         <p className="text-[11px] text-slate-500 text-center mt-2 leading-relaxed px-2">
           {hasTried ? (
             <>
-              You've already tried {FREE_SPLITS} free splits. Charged <b>{fmt(price)}/{plan.per}</b> today.<br/>
+              Charged <b>{fmt(price)}/{plan.per}</b> today. Unlimited splits from now on.<br/>
             </>
           ) : (
             <>
@@ -4059,17 +4100,42 @@ function HistoryScreen({ onClose, showToast }) {
 /* =========================================================================
    Root app
    ========================================================================= */
-/* Freemium: how many completed splits a user gets before the paywall
-   kicks in. This is the "let them fall in love before charging" model —
-   proven to convert far better than a 7-day trial that scares users into
-   forgetting to cancel. Bump this if conversion feels too aggressive. */
-const FREE_SPLITS = 3;
+/* Freemium: **1 free split per calendar day**. Does NOT stack — if you
+   skip a day, you don't get 2 tomorrow. To get unlimited splits you
+   subscribe (monthly or yearly).
+   Why daily? It puts consistent pressure on power users (who split
+   dinner every Friday) to subscribe, while still letting casual users
+   ("we split lunch once a month") enjoy the app for free. Locked-in
+   subscribers avoid the pressure entirely.
+   The counter uses the user's LOCAL date (browser tz) so travelers /
+   night owls don't get penalized by UTC rollover at 8pm PST. */
+const FREE_SPLITS_PER_DAY = 1;
+
+// Returns YYYY-MM-DD in local time. Used as the freemium quota key.
+function todayLocalKey() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 function App() {
   /* ---- Auth + subscription + locale (persisted) ---- */
   const initial = loadState() || {};
   const [user, setUser] = useState(initial.user || null);
   const [subscription, setSubscription] = useState(initial.subscription || null);
+  /* Daily-freemium state:
+       freeSplitDate  — YYYY-MM-DD (local) of the last split the user
+                        consumed from the free tier. If it doesn't match
+                        today, they have 1 fresh free split available.
+       freeSplitsToday — how many free splits used today (0 or 1). Reset
+                        automatically each day (see freeSplitsLeftToday
+                        below — we compute it, never persist it stale).
+     freeSplitsUsed (legacy total) is kept ONLY for the paywall's
+     "you've already tried it" copy, so returning users see the right
+     hero text ("Loved SplitRight?" vs "Unlock SplitRight Pro"). */
+  const [freeSplitDate, setFreeSplitDate] = useState(initial.freeSplitDate || null);
   const [freeSplitsUsed, setFreeSplitsUsed] = useState(
     Number.isFinite(initial.freeSplitsUsed) ? initial.freeSplitsUsed : 0
   );
@@ -4111,10 +4177,10 @@ function App() {
          breakdown: [{ personId, name, color, subtotal, tax, tip, total, paid }] } */
   const [history, setHistory] = useState(Array.isArray(initial.history) ? initial.history : []);
 
-  // Persist whenever user/subscription/locale/theme/history/freeSplitsUsed changes
+  // Persist whenever any user-facing state changes.
   useEffect(() => {
-    saveState({ user, subscription, region, currency, theme, history, freeSplitsUsed });
-  }, [user, subscription, region, currency, theme, history, freeSplitsUsed]);
+    saveState({ user, subscription, region, currency, theme, history, freeSplitsUsed, freeSplitDate });
+  }, [user, subscription, region, currency, theme, history, freeSplitsUsed, freeSplitDate]);
 
   // Build the currency context value (memoized so child components don't re-render unnecessarily)
   const currencyCtx = useMemo(() => ({
@@ -4150,17 +4216,19 @@ function App() {
   }, [subscription]);
 
   /* Access gate — user gets in if EITHER:
-       (a) they still have free splits remaining (freemium hook), OR
-       (b) they've subscribed and it's still valid.
-     This lets first-time users try the whole flow (up to FREE_SPLITS
-     completed splits) with zero friction — no card, no trial countdown.
-     After that, the paywall appears. */
+       (a) they haven't used today's free split yet, OR
+       (b) they've subscribed.
+     Subscribers get unlimited. Non-subscribers get exactly 1 split per
+     calendar day (local time). Skipping a day does NOT bank splits for
+     tomorrow — the quota is a boolean per-day, not a counter. */
   const isSubscribed =
     subscription &&
     (subscription.status === "trial" || subscription.status === "active" ||
      (subscription.status === "canceled" && Date.now() < subscription.renewsAt));
-  const freeSplitsLeft = Math.max(0, FREE_SPLITS - freeSplitsUsed);
-  const hasAccess = isSubscribed || freeSplitsLeft > 0;
+  const today = todayLocalKey();
+  // 1 if today is fresh, 0 if they already used today's free split.
+  const freeSplitsLeftToday = freeSplitDate === today ? 0 : FREE_SPLITS_PER_DAY;
+  const hasAccess = isSubscribed || freeSplitsLeftToday > 0;
 
   /* ---- App state ---- */
   const [screen, setScreen] = useState("scan");
@@ -4214,9 +4282,11 @@ function App() {
   }, [people]); // eslint-disable-line
 
   const reset = () => {
-    // Freemium: only count completed splits against the free quota when
-    // the user is NOT paying. Subscribers get unlimited.
+    // Freemium: mark today as consumed so this device can't split again
+    // until midnight local time. Also increment the lifetime counter so
+    // the paywall shows the returning-user copy. Subscribers skip both.
     if (!isSubscribed) {
+      setFreeSplitDate(todayLocalKey());
       setFreeSplitsUsed((n) => n + 1);
     }
     setPeople(STARTER_PEOPLE);
@@ -4302,11 +4372,12 @@ function App() {
   /* ---- Auth handlers ---- */
   const handleSignedIn = (u) => {
     setUser(u);
-    // If the sign-in flow told us this device is banned, force-consume
-    // all free splits so the paywall opens immediately. Only paying
-    // customers proceed from here.
+    // If the sign-in flow told us this device is banned, mark today as
+    // consumed so the paywall opens immediately. Only paying customers
+    // proceed from here.
     if (u?.banned) {
-      setFreeSplitsUsed(FREE_SPLITS);
+      setFreeSplitDate(todayLocalKey());
+      setFreeSplitsUsed((n) => n + 1);
     }
     // If they already had a subscription saved (e.g. came back), keep it.
   };
@@ -4346,6 +4417,7 @@ function App() {
         onSubscribed={handleSubscribed}
         onSignOut={handleSignOut}
         freeSplitsUsed={freeSplitsUsed}
+        limitReason="daily-used"
       />
     );
   } else if (showHistory) {
@@ -4374,7 +4446,7 @@ function App() {
         onSkipManual={handleSkipManual}
         user={user}
         subscription={subscription}
-        freeSplitsLeft={freeSplitsLeft}
+        freeSplitsLeftToday={freeSplitsLeftToday}
         isSubscribed={isSubscribed}
         onOpenAccount={() => setShowAccount(true)}
         onOpenHistory={() => setShowHistory(true)}
