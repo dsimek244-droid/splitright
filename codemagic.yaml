@@ -81,15 +81,13 @@ workflows:
       xcode: latest
       node: 20
       cocoapods: default
-      # Configure ONE of these under the Codemagic UI before running:
-      #  A) integrations.app_store_connect  → uses App Store Connect API
-      #     for automatic signing. Recommended.
-      #  B) groups: [ ios_signing ] → manual .p12 + provisioning profile
-      #     (upload under Environment variables → Groups).
-      # See https://docs.codemagic.io/yaml-code-signing/signing-ios/
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.splitright.app
+      # ─── CODE SIGNING (disabled until Apple Developer is configured) ────
+      # Uncomment once you have set up App Store Connect integration
+      # in Codemagic UI (see publishing section below for the full setup):
+      #
+      # ios_signing:
+      #   distribution_type: app_store
+      #   bundle_identifier: com.splitright.app
       vars:
         API_BASE: "https://splitright.pages.dev"
         BUNDLE_ID: "com.splitright.app"
@@ -123,31 +121,67 @@ workflows:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" App/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER"       App/Info.plist
           sed -i '' -E "s|PRODUCT_BUNDLE_IDENTIFIER = [^;]+;|PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID;|g" App.xcodeproj/project.pbxproj
-      - name: Auto-provision code signing
-        script: |
-          keychain initialize
-          app-store-connect fetch-signing-files \
-            "$BUNDLE_ID" \
-            --type IOS_APP_STORE \
-            --create
-          keychain add-certificates
-          xcode-project use-profiles
-      - name: Build signed .ipa
+      # ─── CODE SIGNING (disabled until Apple Developer is configured) ────
+      # Uncomment these two blocks (and the ios_signing above + publishing
+      # below) once the App Store Connect integration is set up:
+      #
+      # - name: Auto-provision code signing
+      #   script: |
+      #     keychain initialize
+      #     app-store-connect fetch-signing-files \
+      #       "$BUNDLE_ID" \
+      #       --type IOS_APP_STORE \
+      #       --create
+      #     keychain add-certificates
+      #     xcode-project use-profiles
+      # - name: Build signed .ipa
+      #   script: |
+      #     cd ios/App
+      #     xcode-project build-ipa \
+      #       --workspace App.xcworkspace \
+      #       --scheme App
+      #
+      # Until signing is configured, produce an unsigned .app for verification:
+      - name: Unsigned Xcode archive (temporary — swap for build-ipa once signing is set up)
         script: |
           cd ios/App
-          xcode-project build-ipa \
-            --workspace App.xcworkspace \
-            --scheme App
+          xcodebuild -workspace App.xcworkspace \
+                     -scheme App \
+                     -configuration Release \
+                     -sdk iphoneos \
+                     -destination "generic/platform=iOS" \
+                     CODE_SIGNING_ALLOWED=NO \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY="" \
+                     -derivedDataPath build \
+                     build
     artifacts:
-      - ios/App/build/ios/ipa/*.ipa
+      # Unsigned .app (temporary, until signing is set up)
+      - ios/App/build/Build/Products/Release-iphoneos/*.app
+      # Once signing is enabled, add:
+      # - ios/App/build/ios/ipa/*.ipa
+      - ios/App/build/Logs/**/*.log
       - /tmp/xcodebuild_logs/*.log
-    publishing:
-      # Uploads the .ipa to TestFlight automatically. You'll still need to
-      # promote it to public release inside App Store Connect once you're
-      # happy with the TestFlight build.
-      app_store_connect:
-        auth: integration
-        submit_to_testflight: true
-        # Uncomment when you're ready to submit for App Store review:
-        # submit_to_app_store: true
-        # release_type: MANUAL
+    # ─── PUBLISHING (disabled until Apple Developer + App Store Connect API
+    #     key are configured in Codemagic UI) ──────────────────────────────
+    #
+    # To enable TestFlight uploads:
+    #   1. Get an Apple Developer Program membership ($99/yr).
+    #   2. Create an App Store Connect API key:
+    #      appstoreconnect.apple.com → Users and Access → Keys →
+    #      generate a key with "App Manager" role. Download the .p8 file
+    #      + note the Key ID and Issuer ID.
+    #   3. In Codemagic: Teams → your team → Integrations →
+    #      "App Store Connect" → add the key. Give it a name (e.g.
+    #      "app_store_connect").
+    #   4. Attach it to this workflow by adding under environment: below:
+    #        integrations:
+    #          app_store_connect: app_store_connect
+    #   5. Uncomment the publishing block below.
+    #
+    # publishing:
+    #   app_store_connect:
+    #     auth: integration
+    #     submit_to_testflight: true
+    #     # submit_to_app_store: true    # only when ready for App Store review
+    #     # release_type: MANUAL
